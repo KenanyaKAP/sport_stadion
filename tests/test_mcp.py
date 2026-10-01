@@ -70,6 +70,9 @@ def test_handshake_and_tool_list(mcp):
     }
     assert tools["view_cart"]["annotations"]["readOnlyHint"] is True
     assert tools["cancel_order"]["annotations"]["destructiveHint"] is True
+    for name in ("place_order", "cancel_order"):
+        assert tools[name]["_meta"]["conversify/requiresConfirmation"] is True
+    assert "conversify/requiresConfirmation" not in (tools["add_to_cart"].get("_meta") or {})
     # Compacted schemas: no pydantic titles or nullable anyOf noise
     assert "title" not in str(tools["search_products"]["inputSchema"])
     assert "anyOf" not in str(tools["place_order"]["inputSchema"])

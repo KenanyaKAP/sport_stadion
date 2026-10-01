@@ -32,6 +32,8 @@ EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 
 READ_ONLY = ToolAnnotations(readOnlyHint=True, idempotentHint=True, openWorldHint=False)
 WRITE = ToolAnnotations(readOnlyHint=False, destructiveHint=False, openWorldHint=False)
+# Tells Conversify to ask the user before running the tool (non-standard `_meta` key, namespaced).
+REQUIRES_CONFIRMATION = {"conversify/requiresConfirmation": True}
 
 
 def _instructions() -> str:
@@ -472,6 +474,7 @@ def apply_promo_code(
 @mcp.tool(
     annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=False, idempotentHint=False, openWorldHint=False),
     structured_output=False,
+    meta=REQUIRES_CONFIRMATION,
 )
 def place_order(
     shipping_method: ShippingMethod,
@@ -557,6 +560,7 @@ def get_order_status(
 @mcp.tool(
     annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=True, idempotentHint=True, openWorldHint=False),
     structured_output=False,
+    meta=REQUIRES_CONFIRMATION,
 )
 def cancel_order(
     order_number: Annotated[str, Field(description="e.g. SS-20261001-12345")],
