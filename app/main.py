@@ -10,12 +10,14 @@ from pathlib import Path
 
 from fastapi import Depends, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
+from mcp.server.transport_security import TransportSecuritySettings
 from sqlalchemy.orm import Session
 
-from . import models
+from . import models, services
 from .database import Base, SessionLocal, engine, get_db
+from .mcp_server import mcp
 from .routers import cart, catalog, orders
 from .seed import seed_if_empty
 
@@ -27,7 +29,8 @@ async def lifespan(_: FastAPI):
     Base.metadata.create_all(engine)
     with SessionLocal() as db:
         seed_if_empty(db)
-    yield
+    async with mcp.session_manager.run():
+        yield
 
 
 app = FastAPI(
@@ -37,6 +40,13 @@ app = FastAPI(
     lifespan=lifespan,
 )
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
+
+
+
+@app.exception_handler(services.ServiceError)
+async def service_error_handler(_, exc: services.ServiceError):
+    return JSONResponse(status_code=exc.status, content={"detail": exc.message})
+
 
 app.include_router(catalog.router)
 app.include_router(cart.router)
@@ -55,9 +65,23 @@ def info(db: Session = Depends(get_db)):
         "tagline": "Perlengkapan olahraga — sepatu, apparel, bola, raket, dan aksesoris.",
         "api_version": app.version,
         "currency": "IDR",
+        "mcp_endpoint": "/mcp",
         "product_count": db.query(models.Product).count(),
         "category_count": db.query(models.Category).count(),
     }
+
+
+# ---------- MCP (Streamable HTTP at /mcp) ----------
+# Stateless + plain JSON responses: the customer account travels in the X-Customer-Email header, so no
+# MCP session is needed, and clients don't have to parse SSE. DNS-rebinding protection is off because the
+# server is reached by LAN hostname/IP (e.g. Kens-MacBook-Pro.local) from the iPhone during development.
+_mcp_app = mcp.streamable_http_app(
+    streamable_http_path="/mcp",
+    stateless_http=True,
+    json_response=True,
+    transport_security=TransportSecuritySettings(enable_dns_rebinding_protection=False),
+)
+app.router.routes.extend(_mcp_app.routes)  # a single Route("/mcp"); added directly so /mcp has no redirect
 
 
 # ---------- Storefront (static pages that consume the API above) ----------

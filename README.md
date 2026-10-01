@@ -30,6 +30,46 @@ Test: `pytest`
 
 > Port 8000 di mesin ini sudah dipakai nginx, makanya contoh di atas pakai 8765.
 
+## MCP server
+
+Endpoint MCP (Streamable HTTP, JSON-RPC) ada di **`/mcp`** pada server yang sama, misalnya `http://Kens-MacBook-Pro.local:8765/mcp`. `/api/info` juga mengiklankan `"mcp_endpoint": "/mcp"`.
+
+- **Akun:** setiap request membawa header `X-Customer-Email`. Satu email punya satu keranjang aktif yang dipakai bersama oleh semua chat. Order juga terikat ke email ini. Tanpa header, tool katalog tetap jalan, tapi tool keranjang/order menolak. Ini *trust-based* (tanpa password), hanya untuk toko dummy.
+- **Mode:** stateless dan respons JSON biasa (bukan SSE). Client cukup `POST /mcp` dengan header `Accept: application/json, text/event-stream`.
+- **`instructions`** di respons `initialize` berisi persona toko dan aturan alur belanja. Client bisa menjadikannya system prompt.
+
+| Tool | Fungsi |
+|---|---|
+| `search_products` | Cari produk (kata kunci, kategori, gender, warna, ukuran, harga, urutan) |
+| `get_product_details` | Deskripsi, spesifikasi, stok per warna × ukuran |
+| `get_size_guide` | Tabel ukuran + rekomendasi dari panjang kaki / lingkar dada |
+| `add_to_cart` | Tambah produk (warna + ukuran) ke keranjang akun |
+| `view_cart` | Isi keranjang bernomor, total, opsi ongkir, link web `/cart?cart=…` |
+| `update_cart_item` | Ubah jumlah item (0 = hapus) berdasarkan nomor dari `view_cart` |
+| `apply_promo_code` | Pasang/lepas kode promo |
+| `place_order` | Checkout. Nama/HP/alamat yang tidak diisi diambil dari order terakhir akun |
+| `get_order_status` | Status satu order, atau 5 order terakhir |
+| `cancel_order` | Batalkan order yang belum dikirim |
+
+Tool dirancang untuk model kecil on-device: hasil berupa teks ringkas, input toleran (slug atau nama produk, `black`→`Hitam`, `eu 42`→`42`), dan pesan error memberi tahu model langkah berikutnya. Schema tool dirampingkan (~1.400 token untuk 10 tool).
+
+Tes manual dengan MCP Inspector:
+
+```bash
+npx @modelcontextprotocol/inspector
+# Transport: Streamable HTTP, URL: http://localhost:8765/mcp
+# Tambahkan header X-Customer-Email: kamu@example.com
+```
+
+Contoh dengan curl:
+
+```bash
+curl -s http://127.0.0.1:8765/mcp \
+  -H 'Content-Type: application/json' -H 'Accept: application/json, text/event-stream' \
+  -H 'X-Customer-Email: budi@example.com' \
+  -d '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"search_products","arguments":{"query":"sepatu lari","size":"42"}}}'
+```
+
 ## Data contoh
 
 29 produk, 347 varian (SKU = produk × warna × ukuran) di 9 kategori: sepatu lari, sepatu bola/futsal, sepatu basket, jersey & kaos, celana, bola, raket, tas, aksesoris. Setiap produk punya deskripsi, material, perawatan, highlights, spesifikasi, dan panduan ukuran (per kategori). Beberapa varian sengaja stoknya 0, dan beberapa produk harganya beda per ukuran (mis. botol 500 ml / 750 ml / 1 L).
@@ -93,9 +133,10 @@ app/
   database.py    # engine SQLite (override via env SPORTSTADION_DB_URL)
   models.py      # tabel: categories, brands, products, product_variants, carts, cart_items, orders, order_items, promo_codes
   schemas.py     # Pydantic request/response
-  services.py    # logika harga, promo, ongkir, serialisasi
+  services.py    # logika bisnis bersama REST & MCP: pencarian, harga, promo, ongkir, keranjang, order
+  mcp_server.py  # server MCP (10 tool) di /mcp
   seed.py        # data contoh
   routers/       # catalog.py, cart.py, orders.py
 web/             # index, product, cart, checkout, order, orders + static/app.js, static/styles.css
-tests/           # test end-to-end API
+tests/           # test end-to-end REST API & MCP
 ```

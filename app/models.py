@@ -105,6 +105,8 @@ class Cart(Base):
     __tablename__ = "carts"
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True)  # uuid4
+    # Set for an account's cart (MCP / Conversify, one active cart per email); None for anonymous web carts.
+    customer_email: Mapped[str | None] = mapped_column(String(128), nullable=True, index=True)
     promo_code: Mapped[str | None] = mapped_column(String(32), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)

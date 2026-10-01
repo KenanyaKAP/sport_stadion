@@ -51,18 +51,7 @@ def add_item(cart_id: str, body: schemas.CartItemIn, db: Session = Depends(get_d
     if not variant:
         raise HTTPException(404, "Variant not found")
 
-    item = next((i for i in cart.items if i.variant_id == variant.id), None)
-    new_qty = (item.quantity if item else 0) + body.quantity
-    if new_qty > variant.stock:
-        raise HTTPException(409, f"Only {variant.stock} left in stock for {variant.sku}")
-    if new_qty > 20:
-        raise HTTPException(409, "Maximum 20 per item")
-
-    if item:
-        item.quantity = new_qty
-    else:
-        cart.items.append(models.CartItem(variant=variant, quantity=body.quantity))
-    db.commit()
+    services.add_to_cart(db, cart, variant, body.quantity)
     return services.cart_out(db, cart)
 
 
@@ -72,13 +61,7 @@ def update_item(cart_id: str, item_id: int, body: schemas.CartItemUpdate, db: Se
     item = next((i for i in cart.items if i.id == item_id), None)
     if not item:
         raise HTTPException(404, "Cart item not found")
-    if body.quantity == 0:
-        cart.items.remove(item)
-    else:
-        if body.quantity > item.variant.stock:
-            raise HTTPException(409, f"Only {item.variant.stock} left in stock for {item.variant.sku}")
-        item.quantity = body.quantity
-    db.commit()
+    services.set_item_quantity(db, cart, item, body.quantity)
     return services.cart_out(db, cart)
 
 
@@ -90,11 +73,7 @@ def remove_item(cart_id: str, item_id: int, db: Session = Depends(get_db)):
 @router.post("/{cart_id}/promo", response_model=schemas.CartOut, summary="Apply a promo code")
 def apply_promo(cart_id: str, body: schemas.PromoIn, db: Session = Depends(get_db)):
     cart = _get_cart(db, cart_id)
-    promo = services.find_promo(db, body.code)
-    if not promo:
-        raise HTTPException(404, f"Promo code '{body.code}' is invalid or expired")
-    cart.promo_code = promo.code
-    db.commit()
+    services.apply_promo(db, cart, body.code)
     return services.cart_out(db, cart)
 
 

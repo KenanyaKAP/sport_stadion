@@ -1,8 +1,8 @@
 from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy import and_, func, or_
-from sqlalchemy.orm import Session, selectinload
+from sqlalchemy import func
+from sqlalchemy.orm import Session
 
 from .. import models, schemas, services
 from ..database import get_db
@@ -10,14 +10,6 @@ from ..database import get_db
 router = APIRouter(prefix="/api", tags=["catalog"])
 
 GENDERS = ["men", "women", "unisex", "kids"]
-
-
-def _product_query(db: Session):
-    return db.query(models.Product).options(
-        selectinload(models.Product.variants),
-        selectinload(models.Product.brand),
-        selectinload(models.Product.category),
-    )
 
 
 @router.get("/categories", response_model=list[schemas.CategoryOut])
@@ -84,60 +76,13 @@ def list_products(
     page_size: int = Query(24, ge=1, le=100),
     db: Session = Depends(get_db),
 ):
-    query = _product_query(db).join(models.Product.brand).join(models.Product.category)
-    if q:
-        for term in q.split():
-            like = f"%{term}%"
-            query = query.filter(
-                or_(
-                    models.Product.name.ilike(like),
-                    models.Product.short_description.ilike(like),
-                    models.Product.description.ilike(like),
-                    models.Product.sport.ilike(like),
-                    models.Brand.name.ilike(like),
-                    models.Category.name.ilike(like),
-                )
-            )
-    if category:
-        query = query.filter(models.Category.slug == category)
-    if brand:
-        query = query.filter(models.Brand.slug == brand)
-    if sport:
-        query = query.filter(models.Product.sport == sport)
-    if gender:
-        query = query.filter(models.Product.gender == gender)
-
-    variant_filters = []
-    if color:
-        variant_filters.append(func.lower(models.ProductVariant.color_name) == color.lower())
-    if size:
-        variant_filters.append(models.ProductVariant.size == size)
-    if min_price is not None:
-        variant_filters.append(models.ProductVariant.price >= min_price)
-    if max_price is not None:
-        variant_filters.append(models.ProductVariant.price <= max_price)
-    if in_stock:
-        variant_filters.append(models.ProductVariant.stock > 0)
-    if variant_filters:
-        query = query.filter(models.Product.variants.any(and_(*variant_filters)))
-
-    products = query.all()
-    summaries = [(p, services.product_summary(p)) for p in products]
-
-    if sort == "newest":
-        summaries.sort(key=lambda x: x[0].created_at, reverse=True)
-    elif sort == "price_asc":
-        summaries.sort(key=lambda x: x[1].price_min)
-    elif sort == "price_desc":
-        summaries.sort(key=lambda x: x[1].price_min, reverse=True)
-    elif sort == "rating":
-        summaries.sort(key=lambda x: (x[1].rating, x[1].review_count), reverse=True)
-    else:  # relevance: in-stock first, then popularity
-        summaries.sort(key=lambda x: (not x[1].in_stock, -x[1].review_count))
-
+    summaries = services.search_products(
+        db, q=q, category=category, brand=brand, sport=sport, gender=gender, color=color, size=size,
+        min_price=min_price, max_price=max_price, in_stock=in_stock, sort=sort,
+    )
     start = (page - 1) * page_size
     return schemas.ProductPage(
-        items=[s for _, s in summaries[start : start + page_size]],
+        items=summaries[start : start + page_size],
         total=len(summaries),
         page=page,
         page_size=page_size,
@@ -146,7 +91,7 @@ def list_products(
 
 @router.get("/products/{slug}", response_model=schemas.ProductDetail, summary="Full product detail incl. variants")
 def get_product(slug: str, db: Session = Depends(get_db)):
-    product = _product_query(db).filter(models.Product.slug == slug).first()
+    product = services.product_query(db).filter(models.Product.slug == slug).first()
     if not product:
         raise HTTPException(404, f"Product '{slug}' not found")
     return services.product_detail(product)

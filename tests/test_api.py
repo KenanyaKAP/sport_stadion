@@ -1,23 +1,7 @@
-import os
-import tempfile
-
-# Point the app at a throwaway database before it is imported.
-_db = tempfile.NamedTemporaryFile(suffix=".db", delete=False)
-os.environ["SPORTSTADION_DB_URL"] = f"sqlite:///{_db.name}"
-
-import pytest  # noqa: E402
-from fastapi.testclient import TestClient  # noqa: E402
-
-from app.main import app  # noqa: E402
+# The `client` fixture (TestClient on a throwaway database) lives in conftest.py.
 
 CUSTOMER = {"name": "Budi Santoso", "email": "budi@example.com", "phone": "+62 812 3456 7890"}
 ADDRESS = {"street": "Jl. Sudirman No. 1", "city": "Jakarta Selatan", "province": "DKI Jakarta", "postal_code": "12190"}
-
-
-@pytest.fixture(scope="module")
-def client():
-    with TestClient(app) as c:
-        yield c
 
 
 def first_in_stock(client, slug):
