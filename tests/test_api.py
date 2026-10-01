@@ -133,6 +133,11 @@ def test_free_shipping_threshold(client):
     assert quoted["totals"]["shipping_fee"] == 0
 
 
+def test_info_handshake(client):
+    info = client.get("/api/info").json()
+    assert info["name"] == "Sport Stadion" and info["product_count"] == 29
+
+
 def test_storefront_pages_served(client):
     for path in ["/", "/product/velocita-aero-glide-3", "/cart", "/checkout", "/order/SS-1", "/orders", "/static/app.js"]:
         assert client.get(path).status_code == 200, path

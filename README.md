@@ -12,8 +12,10 @@ Backend + storefront dummy untuk toko perlengkapan olahraga. Dibuat sebagai "thi
 cd backend_sportstadion
 source .venv/bin/activate        # fish: source .venv/bin/activate.fish
 pip install -r requirements.txt  # sekali saja
-uvicorn app.main:app --reload --port 8765
+uvicorn app.main:app --reload --host 0.0.0.0 --port 8765
 ```
+
+`--host 0.0.0.0` diperlukan supaya server bisa diakses dari perangkat lain (iPhone). Tanpa itu server hanya bisa diakses dari Mac ini.
 
 - Website: http://127.0.0.1:8765
 - Dokumentasi API (Swagger): http://127.0.0.1:8765/docs
@@ -40,6 +42,7 @@ Semua harga dalam Rupiah (integer).
 
 | Method | Endpoint | Fungsi |
 |---|---|---|
+| GET | `/api/info` | Handshake: nama toko, versi API, jumlah produk (dipakai Conversify untuk cek koneksi) |
 | GET | `/api/categories` | Daftar kategori + jumlah produk |
 | GET | `/api/brands` | Daftar brand |
 | GET | `/api/facets` | Semua nilai filter (kategori, brand, olahraga, gender, warna, ukuran, rentang harga) |

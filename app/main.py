@@ -1,19 +1,21 @@
 """Sport Stadion — dummy sports retail backend + storefront.
 
-Run:  .venv/bin/uvicorn app.main:app --reload
-API docs: http://127.0.0.1:8000/docs
+Run:  .venv/bin/uvicorn app.main:app --reload --host 0.0.0.0 --port 8765
+API docs: http://127.0.0.1:8765/docs
+(--host 0.0.0.0 makes it reachable from other devices, e.g. the Conversify iPhone app.)
 """
 
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import FastAPI
+from fastapi import Depends, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
+from sqlalchemy.orm import Session
 
-from . import models  # noqa: F401  (registers tables)
-from .database import Base, SessionLocal, engine
+from . import models
+from .database import Base, SessionLocal, engine, get_db
 from .routers import cart, catalog, orders
 from .seed import seed_if_empty
 
@@ -44,6 +46,18 @@ app.include_router(orders.router)
 @app.get("/api/health", tags=["meta"])
 def health():
     return {"status": "ok"}
+
+
+@app.get("/api/info", tags=["meta"], summary="Retailer handshake used by Conversify to verify the connection")
+def info(db: Session = Depends(get_db)):
+    return {
+        "name": "Sport Stadion",
+        "tagline": "Perlengkapan olahraga — sepatu, apparel, bola, raket, dan aksesoris.",
+        "api_version": app.version,
+        "currency": "IDR",
+        "product_count": db.query(models.Product).count(),
+        "category_count": db.query(models.Category).count(),
+    }
 
 
 # ---------- Storefront (static pages that consume the API above) ----------
