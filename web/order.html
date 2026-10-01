@@ -1,0 +1,117 @@
+<!doctype html>
+<html lang="id">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Pesanan — Sport Stadion</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@600;700;800&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/static/styles.css">
+  <script src="/static/app.js"></script>
+</head>
+<body>
+  <main class="container" id="root" style="padding-bottom:60px">
+    <div class="skeleton" style="height:300px; margin-top:30px"></div>
+  </main>
+
+<script>
+const number = decodeURIComponent(location.pathname.split("/").pop());
+const params = new URLSearchParams(location.search);
+const STATUS_LABEL = { pending_payment: "Menunggu Pembayaran", paid: "Dibayar", shipped: "Dikirim", delivered: "Diterima", cancelled: "Dibatalkan" };
+const STEPS = ["pending_payment", "paid", "shipped", "delivered"];
+const SHIP_LABEL = { regular: "Reguler", express: "Express", same_day: "Same Day", pickup: "Ambil di Toko" };
+const PAY_LABEL = { bank_transfer: "Transfer Bank (VA)", e_wallet: "E-Wallet", credit_card: "Kartu Kredit/Debit" };
+let order;
+
+function render() {
+  const o = order;
+  const isNew = params.get("new") === "1";
+  const stepIdx = STEPS.indexOf(o.status);
+  const a = o.shipping_address;
+  const date = new Date(o.created_at).toLocaleString("id-ID", { dateStyle: "long", timeStyle: "short" });
+  document.title = `Pesanan ${o.order_number} — Sport Stadion`;
+  document.getElementById("root").innerHTML = `
+    <div class="order-hero">
+      ${isNew ? `<div class="check-circle">${ICON_SVG.check}</div><h1>Terima kasih, ${esc(o.customer_name.split(" ")[0])}!</h1><p class="muted">Pesananmu sudah kami terima.</p>`
+              : `<h1>Detail Pesanan</h1>`}
+      <div class="num">${esc(o.order_number)}</div>
+      <div style="margin-top:10px"><span class="status ${o.status}">${STATUS_LABEL[o.status]}</span></div>
+    </div>
+    <div class="two-col" style="margin-top:24px">
+      <div>
+        ${o.status !== "cancelled" ? `<div class="panel">
+          <div class="steps">${STEPS.map((s, i) => `<div class="step ${i <= stepIdx ? "done" : ""}"><div class="dot">${i <= stepIdx ? "✓" : i + 1}</div>${STATUS_LABEL[s]}</div>`).join("")}</div>
+          ${o.payment_instructions ? `<div class="pay-box"><b>Instruksi pembayaran</b><br>${esc(o.payment_instructions)}</div>
+            <div style="display:flex; gap:8px; flex-wrap:wrap">
+              <button class="btn btn-primary" id="pay">Simulasikan Pembayaran Berhasil</button>
+              <button class="btn btn-outline" id="cancel">Batalkan Pesanan</button>
+            </div>` : ""}
+          ${o.status === "paid" ? `<p style="margin:14px 0 0">Pembayaran diterima ${new Date(o.paid_at).toLocaleString("id-ID", { dateStyle: "medium", timeStyle: "short" })}. Pesanan sedang disiapkan.</p>
+            <button class="btn btn-outline btn-sm" id="cancel" style="margin-top:10px">Batalkan Pesanan</button>` : ""}
+        </div>` : ""}
+        <div class="panel">
+          <h3>Barang</h3>
+          ${o.items.map((it) => `
+            <div class="line-item">
+              <a class="thumb" href="/product/${it.product_slug}">${productArt(it.icon, it.color_hex)}</a>
+              <div>
+                <a class="name" href="/product/${it.product_slug}">${esc(it.product_name)}</a>
+                <div class="variant"><i style="background:${it.color_hex}"></i>${esc(it.color_name)} · Ukuran ${esc(it.size)}</div>
+                <div class="variant muted">SKU ${esc(it.sku)} · ${it.quantity} × ${rupiah(it.unit_price)}</div>
+              </div>
+              <div class="lt">${rupiah(it.line_total)}</div>
+            </div>`).join("")}
+        </div>
+      </div>
+      <aside class="summary">
+        <div class="panel">
+          <h3>Ringkasan</h3>
+          <div class="sum-row"><span>Subtotal</span><span>${rupiah(o.subtotal)}</span></div>
+          ${o.discount ? `<div class="sum-row discount"><span>Diskon (${esc(o.promo_code)})</span><span>−${rupiah(o.discount)}</span></div>` : ""}
+          <div class="sum-row"><span>Ongkir (${SHIP_LABEL[o.shipping_method] ?? o.shipping_method})</span><span>${o.shipping_fee ? rupiah(o.shipping_fee) : "Gratis"}</span></div>
+          <div class="sum-row total"><span>Total</span><span>${rupiah(o.total)}</span></div>
+        </div>
+        <div class="panel">
+          <h3>Info</h3>
+          <dl class="kv">
+            <dt>Tanggal</dt><dd>${date}</dd>
+            <dt>Pembeli</dt><dd>${esc(o.customer_name)}<br>${esc(o.customer_email)}<br>${esc(o.customer_phone)}</dd>
+            <dt>Alamat</dt><dd>${esc(a.street)}, ${esc(a.city)}, ${esc(a.province)} ${esc(a.postal_code)}</dd>
+            <dt>Pembayaran</dt><dd>${PAY_LABEL[o.payment_method] ?? o.payment_method}</dd>
+            ${o.notes ? `<dt>Catatan</dt><dd>${esc(o.notes)}</dd>` : ""}
+          </dl>
+        </div>
+        <a class="btn btn-outline btn-block" href="/">Lanjut belanja</a>
+      </aside>
+    </div>`;
+
+  document.getElementById("pay")?.addEventListener("click", () => act("pay"));
+  document.getElementById("cancel")?.addEventListener("click", () => {
+    if (confirm("Batalkan pesanan ini? Stok akan dikembalikan.")) act("cancel");
+  });
+}
+
+async function act(kind) {
+  try {
+    order = await API.post(`/orders/${order.order_number}/${kind}`);
+    params.delete("new");
+    render();
+    toast(kind === "pay" ? "Pembayaran berhasil (simulasi)" : "Pesanan dibatalkan");
+  } catch (e) {
+    toast(esc(e.message), { error: true });
+  }
+}
+
+document.addEventListener("DOMContentLoaded", async () => {
+  try {
+    const email = params.get("email");
+    order = await API.get(`/orders/${encodeURIComponent(number)}${email ? `?email=${encodeURIComponent(email)}` : ""}`);
+  } catch {
+    document.getElementById("root").innerHTML = `<div class="empty"><h3>Pesanan tidak ditemukan</h3><p><a href="/orders" style="text-decoration:underline">Cari pesanan</a></p></div>`;
+    return;
+  }
+  render();
+});
+</script>
+</body>
+</html>

@@ -1,0 +1,109 @@
+<!doctype html>
+<html lang="id">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Keranjang — Sport Stadion</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@600;700;800&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/static/styles.css">
+  <script src="/static/app.js"></script>
+</head>
+<body>
+  <main class="container">
+    <h1 class="page-title">Keranjang</h1>
+    <div id="root"><div class="skeleton" style="height:240px"></div></div>
+  </main>
+
+<script>
+let cart;
+
+function render() {
+  updateBadge(cart);
+  const root = document.getElementById("root");
+  if (!cart || !cart.items.length) {
+    root.innerHTML = `<div class="panel empty"><h3>Keranjangmu masih kosong</h3><p>Yuk cari perlengkapan olahraga favoritmu.</p><a class="btn btn-primary" href="/">Mulai belanja</a></div>`;
+    return;
+  }
+  const t = cart.totals;
+  root.innerHTML = `<div class="two-col">
+    <div class="panel">
+      ${cart.items.map((it) => `
+        <div class="line-item" data-id="${it.id}">
+          <a class="thumb" href="/product/${it.product_slug}?color=${encodeURIComponent(it.color_name)}&size=${encodeURIComponent(it.size)}">${productArt(it.icon, it.color_hex)}</a>
+          <div>
+            <div class="card-brand">${esc(it.brand)}</div>
+            <a class="name" href="/product/${it.product_slug}">${esc(it.product_name)}</a>
+            <div class="variant"><i style="background:${it.color_hex}"></i>${esc(it.color_name)} · Ukuran ${esc(it.size)}</div>
+            <div class="variant muted">SKU ${esc(it.sku)}${it.quantity > it.stock ? ` · <span style="color:var(--danger)">stok tinggal ${it.stock}</span>` : it.stock <= 5 ? ` · <span style="color:var(--warn)">sisa ${it.stock}</span>` : ""}</div>
+            <div class="actions">
+              <div class="qty">
+                <button data-act="dec" aria-label="Kurangi">−</button>
+                <input value="${it.quantity}" readonly aria-label="Jumlah">
+                <button data-act="inc" aria-label="Tambah" ${it.quantity >= Math.min(it.stock, 20) ? "disabled" : ""}>+</button>
+              </div>
+              <button class="link-btn" data-act="remove">Hapus</button>
+            </div>
+          </div>
+          <div class="lt">${rupiah(it.line_total)}<div class="unit">${rupiah(it.unit_price)} / pcs</div></div>
+        </div>`).join("")}
+    </div>
+    <aside class="summary">
+      <div class="panel">
+        <h3>Ringkasan</h3>
+        <div class="sum-row"><span>Subtotal (${cart.item_count} barang)</span><span>${rupiah(t.subtotal)}</span></div>
+        ${t.discount ? `<div class="sum-row discount"><span>Diskon (${esc(cart.promo_code)})</span><span>−${rupiah(t.discount)}</span></div>` : ""}
+        <div class="sum-row"><span>Ongkir</span><span class="muted">Dihitung saat checkout</span></div>
+        <div class="sum-row total"><span>Total</span><span>${rupiah(t.total)}</span></div>
+        ${cart.promo_code ? `
+          <div class="promo-applied"><span><b>${esc(cart.promo_code)}</b> — ${esc(cart.promo_description)}</span><button class="link-btn" id="rm-promo">Hapus</button></div>` : `
+          <form class="promo-form" id="promo-form">
+            <input class="input" name="code" placeholder="Kode promo" autocomplete="off" required>
+            <button class="btn btn-outline btn-sm" style="height:40px">Pakai</button>
+          </form>`}
+        <div class="msg" id="promo-msg"></div>
+        <a class="btn btn-primary btn-block" href="/checkout" style="margin-top:8px">Lanjut ke Checkout</a>
+        <a class="btn btn-block" href="/" style="margin-top:6px">Lanjut belanja</a>
+      </div>
+    </aside>
+  </div>`;
+
+  root.querySelectorAll(".line-item").forEach((row) => {
+    const id = row.dataset.id;
+    const it = cart.items.find((i) => String(i.id) === id);
+    row.querySelector('[data-act="dec"]').onclick = () => setQty(id, it.quantity - 1);
+    row.querySelector('[data-act="inc"]').onclick = () => setQty(id, it.quantity + 1);
+    row.querySelector('[data-act="remove"]').onclick = () => setQty(id, 0);
+  });
+  document.getElementById("promo-form")?.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const msg = document.getElementById("promo-msg");
+    try {
+      cart = await API.post(`/carts/${cart.id}/promo`, { code: e.target.code.value });
+      render();
+    } catch (err) {
+      msg.className = "msg err"; msg.textContent = err.message;
+    }
+  });
+  document.getElementById("rm-promo")?.addEventListener("click", async () => {
+    cart = await API.del(`/carts/${cart.id}/promo`);
+    render();
+  });
+}
+
+async function setQty(itemId, quantity) {
+  try {
+    cart = await API.patch(`/carts/${cart.id}/items/${itemId}`, { quantity });
+    render();
+  } catch (e) {
+    toast(esc(e.message), { error: true });
+  }
+}
+
+document.addEventListener("DOMContentLoaded", async () => {
+  cart = await Cart.get();
+  render();
+});
+</script>
+</body>
+</html>

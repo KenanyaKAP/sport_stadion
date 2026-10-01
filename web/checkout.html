@@ -1,0 +1,167 @@
+<!doctype html>
+<html lang="id">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Checkout — Sport Stadion</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@600;700;800&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/static/styles.css">
+  <script src="/static/app.js"></script>
+</head>
+<body>
+  <main class="container">
+    <h1 class="page-title">Checkout</h1>
+    <div id="root"><div class="skeleton" style="height:400px"></div></div>
+  </main>
+
+<script>
+const PROFILE_KEY = "sportstadion.profile";
+let cart, shipping, payments;
+
+const FIELDS = [
+  ["name", "Nama lengkap", "text", "customer", "full"],
+  ["email", "Email", "email", "customer", ""],
+  ["phone", "No. HP", "tel", "customer", ""],
+  ["street", "Alamat (jalan, no. rumah, RT/RW)", "text", "address", "full"],
+  ["city", "Kota / Kabupaten", "text", "address", ""],
+  ["province", "Provinsi", "text", "address", ""],
+  ["postal_code", "Kode pos", "text", "address", ""],
+];
+
+function loadProfile() { try { return JSON.parse(localStorage.getItem(PROFILE_KEY)) ?? {}; } catch { return {}; } }
+function saveProfile(p) { try { localStorage.setItem(PROFILE_KEY, JSON.stringify(p)); } catch {} }
+
+function render() {
+  const root = document.getElementById("root");
+  if (!cart || !cart.items.length) {
+    root.innerHTML = `<div class="panel empty"><h3>Keranjang kosong</h3><p>Tidak ada yang bisa di-checkout.</p><a class="btn btn-primary" href="/">Mulai belanja</a></div>`;
+    return;
+  }
+  const prof = loadProfile();
+  root.innerHTML = `<form class="two-col" id="form" novalidate>
+    <div>
+      <div class="panel">
+        <h3>1. Data Pembeli & Alamat</h3>
+        <div class="form-grid">
+          ${FIELDS.map(([k, label, type, , cls]) => `
+            <div class="field ${cls}">
+              <label for="f-${k}">${label}</label>
+              <input class="input" id="f-${k}" name="${k}" type="${type}" value="${esc(prof[k] ?? "")}" required>
+              <div class="error" data-err="${k}"></div>
+            </div>`).join("")}
+          <div class="field full">
+            <label for="f-notes">Catatan (opsional)</label>
+            <textarea class="input" id="f-notes" name="notes" placeholder="Contoh: titip ke satpam"></textarea>
+          </div>
+        </div>
+      </div>
+      <div class="panel">
+        <h3>2. Pengiriman</h3>
+        <div class="radio-cards">${shipping.map((s, i) => `
+          <label class="radio-card">
+            <input type="radio" name="shipping_method" value="${s.code}" ${i === 0 ? "checked" : ""}>
+            <div class="rc-main"><div class="rc-title">${esc(s.name)} <span class="muted" style="font-weight:400">· ${esc(s.eta_days)}</span></div>
+              <div class="rc-sub">${esc(s.description)}${s.free_over ? ` Gratis di atas ${rupiah(s.free_over)}.` : ""}</div></div>
+            <div class="rc-price">${s.fee ? rupiah(s.fee) : "Gratis"}</div>
+          </label>`).join("")}
+        </div>
+      </div>
+      <div class="panel">
+        <h3>3. Pembayaran</h3>
+        <div class="radio-cards">${payments.map((p, i) => `
+          <label class="radio-card">
+            <input type="radio" name="payment_method" value="${p.code}" ${i === 0 ? "checked" : ""}>
+            <div class="rc-main"><div class="rc-title">${esc(p.name)}</div><div class="rc-sub">${esc(p.description)}</div></div>
+          </label>`).join("")}
+        </div>
+        <p class="muted" style="font-size:13px; margin-bottom:0">Ini toko simulasi — tidak ada uang sungguhan yang ditarik.</p>
+      </div>
+    </div>
+    <aside class="summary">
+      <div class="panel">
+        <h3>Pesanan (${cart.item_count})</h3>
+        <div class="mini-items">${cart.items.map((it) => `
+          <div class="mini-item">
+            <div class="thumb">${productArt(it.icon, it.color_hex)}<span class="q">${it.quantity}</span></div>
+            <div><div style="font-weight:600">${esc(it.product_name)}</div><div class="muted">${esc(it.color_name)} · ${esc(it.size)}</div></div>
+            <div style="font-weight:600">${rupiah(it.line_total)}</div>
+          </div>`).join("")}
+        </div>
+        <div id="totals"></div>
+        <button class="btn btn-primary btn-block" id="place" type="submit" style="margin-top:12px">Buat Pesanan</button>
+        <div class="msg err" id="form-msg" style="margin-top:8px"></div>
+        <a class="btn btn-block" href="/cart" style="margin-top:4px">Kembali ke keranjang</a>
+      </div>
+    </aside>
+  </form>`;
+
+  const form = document.getElementById("form");
+  form.querySelectorAll('input[name="shipping_method"]').forEach((r) => (r.onchange = refreshTotals));
+  form.onsubmit = submit;
+  refreshTotals();
+}
+
+async function refreshTotals() {
+  const method = document.querySelector('input[name="shipping_method"]:checked').value;
+  const c = await API.get(`/carts/${cart.id}?shipping_method=${method}`);
+  const t = c.totals;
+  document.getElementById("totals").innerHTML = `
+    <div class="sum-row"><span>Subtotal</span><span>${rupiah(t.subtotal)}</span></div>
+    ${t.discount ? `<div class="sum-row discount"><span>Diskon (${esc(c.promo_code)})</span><span>−${rupiah(t.discount)}</span></div>` : ""}
+    <div class="sum-row"><span>Ongkir</span><span>${t.shipping_fee ? rupiah(t.shipping_fee) : "Gratis"}</span></div>
+    <div class="sum-row total"><span>Total</span><span>${rupiah(t.total)}</span></div>`;
+}
+
+function validate(data) {
+  const errs = {};
+  FIELDS.forEach(([k, label]) => { if (!data[k]?.trim()) errs[k] = `${label} wajib diisi`; });
+  if (data.email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(data.email)) errs.email = "Format email tidak valid";
+  if (data.phone && !/^\+?[0-9 \-]{8,20}$/.test(data.phone)) errs.phone = "Nomor HP tidak valid";
+  if (data.postal_code && !/^\d{5}$/.test(data.postal_code)) errs.postal_code = "Kode pos harus 5 digit";
+  return errs;
+}
+
+async function submit(e) {
+  e.preventDefault();
+  const form = e.target;
+  const data = Object.fromEntries(new FormData(form));
+  const errs = validate(data);
+  FIELDS.forEach(([k]) => {
+    form.elements[k].classList.toggle("invalid", !!errs[k]);
+    form.querySelector(`[data-err="${k}"]`).textContent = errs[k] ?? "";
+  });
+  if (Object.keys(errs).length) {
+    form.elements[Object.keys(errs)[0]].focus();
+    return;
+  }
+  const btn = document.getElementById("place");
+  btn.disabled = true;
+  btn.textContent = "Memproses…";
+  try {
+    const order = await API.post("/checkout", {
+      cart_id: cart.id,
+      customer: { name: data.name, email: data.email, phone: data.phone },
+      shipping_address: { street: data.street, city: data.city, province: data.province, postal_code: data.postal_code },
+      shipping_method: data.shipping_method,
+      payment_method: data.payment_method,
+      notes: data.notes ?? "",
+    });
+    const { notes, shipping_method, payment_method, ...profile } = data;
+    saveProfile(profile);
+    Cart.setId(null);
+    location.href = `/order/${order.order_number}?email=${encodeURIComponent(order.customer_email)}&new=1`;
+  } catch (err) {
+    document.getElementById("form-msg").textContent = err.message;
+    btn.disabled = false;
+    btn.textContent = "Buat Pesanan";
+  }
+}
+
+document.addEventListener("DOMContentLoaded", async () => {
+  [cart, shipping, payments] = await Promise.all([Cart.get(), API.get("/shipping-methods"), API.get("/payment-methods")]);
+  render();
+});
+</script>
+</body>
+</html>

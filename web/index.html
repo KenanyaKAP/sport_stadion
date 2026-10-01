@@ -1,0 +1,218 @@
+<!doctype html>
+<html lang="id">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Sport Stadion — Perlengkapan Olahraga</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@600;700;800&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/static/styles.css">
+  <script src="/static/app.js"></script>
+</head>
+<body>
+  <section class="hero">
+    <div class="container">
+      <div>
+        <h1>Main lebih <em>jauh.</em><br>Lari lebih <em>cepat.</em></h1>
+        <p>Sepatu, apparel, dan perlengkapan olahraga pilihan — dari lapangan futsal sampai garis finish marathon.</p>
+        <div class="promo-strip">
+          <span class="promo-chip">Kode <b>STADION10</b> diskon 10%</span>
+          <span class="promo-chip">Gratis ongkir Reguler di atas Rp500.000</span>
+        </div>
+      </div>
+      <div class="hero-art" id="hero-art"></div>
+    </div>
+  </section>
+
+  <main class="container">
+    <div class="cat-strip" id="cat-strip"></div>
+
+    <div class="catalog">
+      <aside class="filters" id="filters"></aside>
+      <section>
+        <div class="toolbar">
+          <div>
+            <h2 id="result-title">Semua Produk</h2>
+            <span class="muted" id="result-count"></span>
+          </div>
+          <div style="display:flex; gap:8px; align-items:center">
+            <button class="btn btn-outline btn-sm filter-toggle" id="filter-toggle">Filter</button>
+            <select class="input" id="sort" aria-label="Urutkan">
+              <option value="relevance">Paling relevan</option>
+              <option value="newest">Terbaru</option>
+              <option value="price_asc">Harga terendah</option>
+              <option value="price_desc">Harga tertinggi</option>
+              <option value="rating">Rating tertinggi</option>
+            </select>
+          </div>
+        </div>
+        <div class="active-filters" id="active-filters"></div>
+        <div class="grid" id="grid"></div>
+        <div class="pager" id="pager"></div>
+      </section>
+    </div>
+  </main>
+
+<script>
+const PAGE_SIZE = 12;
+const FILTER_KEYS = ["q", "category", "brand", "sport", "gender", "color", "size", "min_price", "max_price", "in_stock", "sort", "page"];
+let facets;
+
+function state() {
+  const p = new URLSearchParams(location.search);
+  const s = {};
+  FILTER_KEYS.forEach((k) => { if (p.get(k)) s[k] = p.get(k); });
+  return s;
+}
+
+function setState(patch, { resetPage = true } = {}) {
+  const s = { ...state(), ...patch };
+  if (resetPage && !("page" in patch)) delete s.page;
+  Object.keys(s).forEach((k) => (s[k] === undefined || s[k] === "" || s[k] === null) && delete s[k]);
+  history.pushState(null, "", "/?" + new URLSearchParams(s).toString());
+  render();
+}
+
+function renderCategories(s) {
+  const all = `<button class="cat-chip ${!s.category ? "active" : ""}" data-cat=""><span class="ic">${productArt("ball", "#0b6e4f", { bg: false })}</span>Semua</button>`;
+  document.getElementById("cat-strip").innerHTML = all + facets.categories.map((c) => `
+    <button class="cat-chip ${s.category === c.slug ? "active" : ""}" data-cat="${c.slug}">
+      <span class="ic">${productArt(c.icon, "#8a8f98", { bg: false })}</span>${esc(c.name)} <small>${c.product_count}</small>
+    </button>`).join("");
+  document.querySelectorAll(".cat-chip svg").forEach((svg) => { svg.setAttribute("width", 22); svg.setAttribute("height", 22); });
+  document.querySelectorAll(".cat-chip").forEach((b) => (b.onclick = () => setState({ category: b.dataset.cat || undefined })));
+}
+
+function renderFilters(s) {
+  const radio = (key, items, labelFn = (x) => x) => items.map((v) => `
+    <label class="check"><input type="radio" name="${key}" value="${esc(v.value ?? v)}" ${s[key] === (v.value ?? v) ? "checked" : ""}> ${esc(labelFn(v))}</label>`).join("");
+  const APPAREL_ORDER = ["XS", "S", "M", "L", "XL", "XXL"];
+  const shoeSizes = facets.sizes.filter((x) => /^\d{2}$/.test(x)).sort((a, b) => a - b);
+  const apparelSizes = APPAREL_ORDER.filter((x) => facets.sizes.includes(x));
+  document.getElementById("filters").innerHTML = `
+    <div class="filter-group">
+      <h4>Brand</h4>
+      <label class="check"><input type="radio" name="brand" value="" ${!s.brand ? "checked" : ""}> Semua brand</label>
+      ${radio("brand", facets.brands.map((b) => ({ value: b.slug, label: b.name })), (b) => b.label)}
+    </div>
+    <div class="filter-group">
+      <h4>Untuk</h4>
+      <label class="check"><input type="radio" name="gender" value="" ${!s.gender ? "checked" : ""}> Semua</label>
+      ${radio("gender", facets.genders, (g) => GENDER_LABEL[g] ?? g)}
+    </div>
+    <div class="filter-group">
+      <h4>Olahraga</h4>
+      <label class="check"><input type="radio" name="sport" value="" ${!s.sport ? "checked" : ""}> Semua</label>
+      ${radio("sport", facets.sports, sportLabel)}
+    </div>
+    <div class="filter-group">
+      <h4>Warna</h4>
+      <div class="swatches">${facets.colors.map((c) => `<button class="swatch ${s.color === c.name ? "active" : ""}" title="${esc(c.name)}" data-color="${esc(c.name)}" style="background:${c.hex}"></button>`).join("")}</div>
+    </div>
+    <div class="filter-group">
+      <h4>Ukuran sepatu (EU)</h4>
+      <div class="size-pills">${shoeSizes.map((z) => `<button class="pill ${s.size === z ? "active" : ""}" data-size="${z}">${z}</button>`).join("")}</div>
+      <h4 style="margin-top:14px">Ukuran pakaian</h4>
+      <div class="size-pills">${apparelSizes.map((z) => `<button class="pill ${s.size === z ? "active" : ""}" data-size="${z}">${z}</button>`).join("")}</div>
+    </div>
+    <div class="filter-group">
+      <h4>Harga (Rp)</h4>
+      <form class="price-inputs" id="price-form">
+        <input class="input" name="min_price" type="number" min="0" step="10000" placeholder="Min" value="${s.min_price ?? ""}">
+        <span>–</span>
+        <input class="input" name="max_price" type="number" min="0" step="10000" placeholder="Maks" value="${s.max_price ?? ""}">
+        <button class="btn btn-dark btn-sm" type="submit">OK</button>
+      </form>
+    </div>
+    <div class="filter-group">
+      <label class="check"><input type="checkbox" id="in-stock" ${s.in_stock ? "checked" : ""}> Hanya yang tersedia</label>
+    </div>`;
+
+  document.querySelectorAll('#filters input[type="radio"]').forEach((el) => (el.onchange = () => setState({ [el.name]: el.value || undefined })));
+  document.querySelectorAll("#filters .swatch").forEach((b) => (b.onclick = () => setState({ color: s.color === b.dataset.color ? undefined : b.dataset.color })));
+  document.querySelectorAll("#filters .pill").forEach((b) => (b.onclick = () => setState({ size: s.size === b.dataset.size ? undefined : b.dataset.size })));
+  document.getElementById("in-stock").onchange = (e) => setState({ in_stock: e.target.checked ? "true" : undefined });
+  document.getElementById("price-form").onsubmit = (e) => {
+    e.preventDefault();
+    const f = new FormData(e.target);
+    setState({ min_price: f.get("min_price") || undefined, max_price: f.get("max_price") || undefined });
+  };
+}
+
+function renderActive(s) {
+  const labels = {
+    q: (v) => `"${v}"`,
+    category: (v) => facets.categories.find((c) => c.slug === v)?.name ?? v,
+    brand: (v) => facets.brands.find((b) => b.slug === v)?.name ?? v,
+    sport: sportLabel, gender: (v) => GENDER_LABEL[v] ?? v, color: (v) => v, size: (v) => `Ukuran ${v}`,
+    min_price: (v) => `≥ ${rupiah(v)}`, max_price: (v) => `≤ ${rupiah(v)}`, in_stock: () => "Tersedia",
+  };
+  const tags = Object.keys(labels).filter((k) => s[k]).map((k) =>
+    `<span class="tag">${esc(labels[k](s[k]))}<button data-k="${k}" aria-label="Hapus">×</button></span>`);
+  if (tags.length > 1) tags.push(`<button class="link-btn" id="clear-all">Hapus semua</button>`);
+  const el = document.getElementById("active-filters");
+  el.innerHTML = tags.join("");
+  el.querySelectorAll(".tag button").forEach((b) => (b.onclick = () => setState({ [b.dataset.k]: undefined })));
+  document.getElementById("clear-all")?.addEventListener("click", () => { history.pushState(null, "", "/"); render(); });
+}
+
+function card(p) {
+  const color = p.colors[0]?.hex;
+  const discount = p.compare_at_price ? Math.round((1 - p.price_min / p.compare_at_price) * 100) : 0;
+  return `<a class="card" href="/product/${p.slug}">
+    <div class="card-art">${productArt(p.icon, color)}
+      ${!p.in_stock ? `<span class="badge soldout">Habis</span>` : discount ? `<span class="badge">-${discount}%</span>` : ""}
+    </div>
+    <div class="card-body">
+      <div class="card-brand">${esc(p.brand)} · ${esc(GENDER_LABEL[p.gender] ?? p.gender)}</div>
+      <div class="card-name">${esc(p.name)}</div>
+      <div class="card-meta">${stars(p.rating)} <span class="muted">(${p.review_count.toLocaleString("id-ID")})</span></div>
+      <div class="card-colors">${p.colors.map((c) => `<span title="${esc(c.name)}" style="background:${c.hex}"></span>`).join("")}</div>
+      <div class="price">${priceRange(p)}${p.compare_at_price ? `<s>${rupiah(p.compare_at_price)}</s>` : ""}</div>
+    </div>
+  </a>`;
+}
+
+async function render() {
+  const s = state();
+  renderCategories(s);
+  renderFilters(s);
+  renderActive(s);
+  document.getElementById("sort").value = s.sort ?? "relevance";
+  const searchInput = document.querySelector(".header-search input");
+  if (searchInput) searchInput.value = s.q ?? "";
+
+  const grid = document.getElementById("grid");
+  grid.innerHTML = Array.from({ length: 6 }, () => `<div class="skeleton" style="aspect-ratio:3/4"></div>`).join("");
+
+  const params = new URLSearchParams({ ...s, page_size: PAGE_SIZE });
+  const data = await API.get(`/products?${params}`);
+  const cat = facets.categories.find((c) => c.slug === s.category);
+  document.getElementById("result-title").textContent = s.q ? `Hasil untuk "${s.q}"` : cat?.name ?? "Semua Produk";
+  document.getElementById("result-count").textContent = `${data.total} produk`;
+
+  grid.innerHTML = data.items.length ? data.items.map(card).join("") :
+    `<div class="empty" style="grid-column:1/-1"><h3>Produk tidak ditemukan</h3><p>Coba kurangi filter atau ubah kata kunci pencarian.</p></div>`;
+
+  const pages = Math.ceil(data.total / PAGE_SIZE);
+  const cur = Number(s.page ?? 1);
+  document.getElementById("pager").innerHTML = pages > 1 ? Array.from({ length: pages }, (_, i) =>
+    `<button class="pill ${i + 1 === cur ? "active" : ""}" data-page="${i + 1}">${i + 1}</button>`).join("") : "";
+  document.querySelectorAll("#pager .pill").forEach((b) => (b.onclick = () => { setState({ page: b.dataset.page }, { resetPage: false }); scrollTo({ top: 0, behavior: "smooth" }); }));
+}
+
+document.addEventListener("DOMContentLoaded", async () => {
+  document.getElementById("hero-art").innerHTML = productArt("shoe", "#d4f25a", { bg: false });
+  document.getElementById("sort").onchange = (e) => setState({ sort: e.target.value === "relevance" ? undefined : e.target.value });
+  document.getElementById("filter-toggle").onclick = () => document.getElementById("filters").classList.toggle("open");
+  document.querySelector(".header-search").addEventListener("submit", (e) => {
+    e.preventDefault();
+    setState({ q: e.target.q.value.trim() || undefined });
+  });
+  facets = await API.get("/facets");
+  render();
+});
+window.addEventListener("popstate", render);
+</script>
+</body>
+</html>

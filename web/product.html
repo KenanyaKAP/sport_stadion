@@ -1,0 +1,220 @@
+<!doctype html>
+<html lang="id">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Produk — Sport Stadion</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@600;700;800&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/static/styles.css">
+  <script src="/static/app.js"></script>
+</head>
+<body>
+  <main class="container" id="root" style="padding-bottom:60px">
+    <div class="pdp" style="margin-top:24px">
+      <div class="skeleton" style="aspect-ratio:1/1"></div>
+      <div class="skeleton" style="height:420px"></div>
+    </div>
+  </main>
+
+<script>
+const slug = decodeURIComponent(location.pathname.split("/").pop());
+const params = new URLSearchParams(location.search);
+let P, sel = { color: null, size: null, qty: 1 };
+
+const variantsFor = (color) => P.variants.filter((v) => v.color_name === color);
+const current = () => P.variants.find((v) => v.color_name === sel.color && v.size === sel.size);
+
+function syncUrl() {
+  const q = new URLSearchParams();
+  if (sel.color) q.set("color", sel.color);
+  if (sel.size) q.set("size", sel.size);
+  history.replaceState(null, "", `${location.pathname}?${q}`);
+}
+
+function renderShell() {
+  document.title = `${P.name} — Sport Stadion`;
+  const discount = P.compare_at_price ? Math.round((1 - P.price_min / P.compare_at_price) * 100) : 0;
+  document.getElementById("root").innerHTML = `
+    <nav class="breadcrumb">
+      <a href="/">Beranda</a> / <a href="/?category=${P.category_slug}">${esc(P.category)}</a> / <span>${esc(P.name)}</span>
+    </nav>
+    <div class="pdp">
+      <div class="pdp-art">
+        <div id="main-art"></div>
+        <div class="pdp-thumbs" id="thumbs"></div>
+      </div>
+      <div class="pdp-info">
+        <div class="pdp-brand">${esc(P.brand)} · ${esc(sportLabel(P.sport))} · ${esc(GENDER_LABEL[P.gender] ?? P.gender)}</div>
+        <h1>${esc(P.name)}</h1>
+        <div class="card-meta">${stars(P.rating)} <span class="muted">${P.review_count.toLocaleString("id-ID")} ulasan</span></div>
+        <p style="color:var(--ink-2); margin:12px 0 0">${esc(P.short_description)}</p>
+        <div class="pdp-price" id="price"></div>
+
+        <div class="opt-label">Warna <span id="color-label"></span></div>
+        <div class="color-opts" id="colors"></div>
+
+        <div class="opt-label">Ukuran <span id="size-label"></span>
+          ${P.size_chart ? `<button class="link-btn" id="open-chart">Panduan ukuran</button>` : ""}
+        </div>
+        <div class="size-opts" id="sizes"></div>
+        <div class="stock-note" id="stock"></div>
+
+        <div class="buy-row">
+          <div class="qty">
+            <button id="qty-dec" aria-label="Kurangi">−</button>
+            <input id="qty" type="number" value="1" min="1" aria-label="Jumlah">
+            <button id="qty-inc" aria-label="Tambah">+</button>
+          </div>
+          <button class="btn btn-primary" id="add">Tambah ke Keranjang</button>
+        </div>
+
+        <div class="perks">
+          <div>🚚 Gratis ongkir Reguler di atas Rp500.000</div>
+          <div>↩️ Tukar ukuran gratis 14 hari</div>
+          <div>✅ Produk original bergaransi</div>
+          <div>🏬 Bisa ambil di toko Senayan</div>
+        </div>
+
+        <div class="details">
+          <details open><summary>Deskripsi</summary><div class="content">
+            <p style="margin-top:0">${esc(P.description)}</p>
+            ${P.highlights.length ? `<ul class="highlights">${P.highlights.map((h) => `<li>${esc(h)}</li>`).join("")}</ul>` : ""}
+          </div></details>
+          <details open><summary>Spesifikasi</summary><div class="content"><table class="spec" id="spec"></table></div></details>
+          <details><summary>Material & Perawatan</summary><div class="content">
+            <p style="margin-top:0"><b>Material.</b> ${esc(P.material)}</p>
+            <p><b>Perawatan.</b> ${esc(P.care_instructions)}</p>
+          </div></details>
+          ${P.size_chart ? `<details id="chart-details"><summary>${esc(P.size_chart.title ?? "Panduan Ukuran")}</summary><div class="content" id="chart"></div></details>` : ""}
+          <details><summary>Tentang ${esc(P.brand_info.name)}</summary><div class="content">
+            <p style="margin-top:0">${esc(P.brand_info.description)}</p>
+            <p class="muted">Asal: ${esc(P.brand_info.country)} · <a href="/?brand=${P.brand_info.slug}" style="text-decoration:underline">Lihat semua produk ${esc(P.brand_info.name)}</a></p>
+          </div></details>
+        </div>
+      </div>
+    </div>`;
+
+  document.getElementById("thumbs").innerHTML = P.colors.map((c) =>
+    `<button data-color="${esc(c.name)}" title="${esc(c.name)}">${productArt(P.icon, c.hex)}</button>`).join("");
+  document.getElementById("colors").innerHTML = P.colors.map((c) => {
+    const avail = variantsFor(c.name).some((v) => v.in_stock);
+    return `<button class="color-opt" data-color="${esc(c.name)}" title="${avail ? "" : "Stok habis"}" style="${avail ? "" : "opacity:.5"}"><i style="background:${c.hex}"></i>${esc(c.name)}</button>`;
+  }).join("");
+
+  document.querySelectorAll("[data-color]").forEach((b) => (b.onclick = () => {
+    sel.color = b.dataset.color;
+    const v = current();
+    if (!v || !v.in_stock) sel.size = null;
+    update();
+  }));
+  document.getElementById("qty-dec").onclick = () => { sel.qty = Math.max(1, sel.qty - 1); update(); };
+  document.getElementById("qty-inc").onclick = () => { sel.qty += 1; update(); };
+  document.getElementById("qty").onchange = (e) => { sel.qty = Math.max(1, parseInt(e.target.value) || 1); update(); };
+  document.getElementById("add").onclick = addToCart;
+  document.getElementById("open-chart")?.addEventListener("click", () => {
+    const d = document.getElementById("chart-details");
+    d.open = true;
+    d.scrollIntoView({ behavior: "smooth", block: "start" });
+  });
+}
+
+function update() {
+  const color = P.colors.find((c) => c.name === sel.color);
+  const v = current();
+
+  document.getElementById("main-art").innerHTML = productArt(P.icon, color.hex);
+  document.querySelectorAll("#thumbs button, .color-opt").forEach((b) => b.classList.toggle("active", b.dataset.color === sel.color));
+  document.getElementById("color-label").textContent = sel.color;
+
+  // Sizes for the selected colour; disable those out of stock.
+  const vs = variantsFor(sel.color);
+  document.getElementById("sizes").innerHTML = P.sizes.map((size) => {
+    const sv = vs.find((x) => x.size === size);
+    const ok = sv && sv.in_stock;
+    return `<button class="size-opt ${sel.size === size ? "active" : ""}" data-size="${esc(size)}" ${ok ? "" : "disabled"} title="${ok ? "" : "Stok habis"}">${esc(size)}</button>`;
+  }).join("");
+  document.querySelectorAll(".size-opt").forEach((b) => (b.onclick = () => { sel.size = b.dataset.size; sel.qty = 1; update(); }));
+  document.getElementById("size-label").textContent = sel.size ?? "Pilih ukuran";
+
+  // Price
+  const price = v ? v.price : null;
+  const cmp = P.compare_at_price;
+  document.getElementById("price").innerHTML = (price ? rupiah(price) : priceRange(P)) +
+    (cmp ? `<s>${rupiah(cmp)}</s><span class="save-tag">Hemat ${rupiah(cmp - (price ?? P.price_min))}</span>` : "");
+
+  // Stock & quantity
+  const stockEl = document.getElementById("stock");
+  const max = v ? Math.min(v.stock, 20) : 20;
+  sel.qty = Math.min(sel.qty, Math.max(max, 1));
+  document.getElementById("qty").value = sel.qty;
+  if (!vs.some((x) => x.in_stock)) {
+    stockEl.className = "stock-note out"; stockEl.textContent = `Warna ${sel.color} sedang habis di semua ukuran.`;
+  } else if (!v) {
+    stockEl.className = "stock-note"; stockEl.textContent = "";
+  } else if (v.stock <= 5) {
+    stockEl.className = "stock-note low"; stockEl.textContent = `Tinggal ${v.stock} lagi — segera checkout!`;
+  } else {
+    stockEl.className = "stock-note ok"; stockEl.textContent = `✓ Tersedia (${v.stock} stok) · SKU ${v.sku}`;
+  }
+  document.getElementById("qty-inc").disabled = sel.qty >= max;
+  const add = document.getElementById("add");
+  add.disabled = !v || !v.in_stock;
+  add.textContent = !sel.size ? "Pilih ukuran dulu" : "Tambah ke Keranjang";
+
+  // Spec table
+  const rows = [
+    ["Kategori", P.category], ["Olahraga", sportLabel(P.sport)], ["Untuk", GENDER_LABEL[P.gender] ?? P.gender],
+    ...Object.entries(P.specs),
+    ["Warna tersedia", P.colors.map((c) => c.name).join(", ")],
+    ["Ukuran tersedia", P.sizes.join(", ")],
+  ];
+  if (v) rows.push(["SKU terpilih", v.sku]);
+  document.getElementById("spec").innerHTML = rows.map(([k, val]) => `<tr><th>${esc(k)}</th><td>${esc(val)}</td></tr>`).join("");
+
+  // Size chart (highlight the selected size row)
+  const chartEl = document.getElementById("chart");
+  if (chartEl) {
+    const ch = P.size_chart;
+    chartEl.innerHTML = `<div class="table-scroll"><table class="chart">
+      <tr>${ch.headers.map((h) => `<th>${esc(h)}</th>`).join("")}</tr>
+      ${ch.rows.map((r) => `<tr class="${r[0] === sel.size ? "hl" : ""}">${r.map((c) => `<td>${esc(c)}</td>`).join("")}</tr>`).join("")}
+    </table></div>${ch.note ? `<p class="muted" style="font-size:13px">${esc(ch.note)}</p>` : ""}`;
+  }
+  syncUrl();
+}
+
+async function addToCart() {
+  const v = current();
+  if (!v) return;
+  const btn = document.getElementById("add");
+  btn.disabled = true;
+  try {
+    await Cart.add(v.id, sel.qty);
+    toast(`Ditambahkan: ${esc(P.name)} (${esc(v.color_name)}, ${esc(v.size)}) × ${sel.qty} <a href="/cart">Lihat keranjang</a>`);
+  } catch (e) {
+    toast(esc(e.message), { error: true });
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+document.addEventListener("DOMContentLoaded", async () => {
+  try {
+    P = await API.get(`/products/${encodeURIComponent(slug)}`);
+  } catch (e) {
+    document.getElementById("root").innerHTML = `<div class="empty"><h3>Produk tidak ditemukan</h3><p><a href="/" style="text-decoration:underline">Kembali ke katalog</a></p></div>`;
+    return;
+  }
+  const wantColor = P.colors.find((c) => c.name === params.get("color"));
+  const firstAvail = P.colors.find((c) => variantsFor(c.name).some((v) => v.in_stock)) ?? P.colors[0];
+  sel.color = (wantColor ?? firstAvail).name;
+  const wantSize = params.get("size");
+  if (wantSize && variantsFor(sel.color).some((v) => v.size === wantSize && v.in_stock)) sel.size = wantSize;
+  else if (P.sizes.length === 1 && variantsFor(sel.color)[0]?.in_stock) sel.size = P.sizes[0];
+  renderShell();
+  update();
+});
+</script>
+</body>
+</html>
