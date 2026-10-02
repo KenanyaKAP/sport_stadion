@@ -36,24 +36,62 @@ WRITE = ToolAnnotations(readOnlyHint=False, destructiveHint=False, openWorldHint
 REQUIRES_CONFIRMATION = {"conversify/requiresConfirmation": True}
 
 
-def _instructions() -> str:
+STORE_POLICIES = (
+    "Free Regular shipping on orders over Rp500.000; free size exchange within 14 days; "
+    "all products are original with warranty; pickup is available at the Sport Stadion Senayan store."
+)
+
+
+def build_instructions(db: Session | None = None) -> str:
+    """Server instructions sent in `initialize`: persona, grounding rules, shopping flow and, when a
+    database session is given, a summary of the actual catalogue so the model never needs to guess
+    which brands or categories exist."""
     shipping = "; ".join(
         f"{code} ({m['name']}, {rp(m['fee']) if m['fee'] else 'free'}"
         + (f", free over {rp(m['free_over'])}" if m["free_over"] else "")
         + f", {m['eta_days']})"
         for code, m in services.SHIPPING_METHODS.items()
     )
-    return (
-        "You are the shopping assistant of Sport Stadion, an Indonesian sports store "
-        "(shoes, apparel, balls, rackets, bags, accessories). Prices are in Indonesian Rupiah. "
-        "Product data and colour names are in Indonesian (Hitam=black, Putih=white, Merah=red, Biru Navy=navy). "
-        "Typical flow: search_products -> get_product_details (check colour/size stock) -> add_to_cart -> "
-        "view_cart -> place_order. Ask for colour and size when the customer hasn't said. "
-        "Before place_order, summarise items, total, shipping method, payment method and address, "
-        "and wait for the customer's explicit confirmation. You cannot take payment: after ordering, "
-        "share the payment instructions and the order link. "
-        f"Shipping methods: {shipping}. Payment methods: bank_transfer, e_wallet, credit_card."
-    )
+    parts = [
+        "You are the shopping assistant of Sport Stadion, an Indonesian sports store. Prices are in "
+        "Indonesian Rupiah. Product data and colour names are in Indonesian (Hitam=black, Putih=white, "
+        "Merah=red, Biru Navy=navy).",
+    ]
+    if db is not None:
+        products = services.search_products(db)
+        brand_categories: dict[str, list[str]] = {}
+        for p in products:
+            cats = brand_categories.setdefault(p.brand_slug, [])
+            if p.category not in cats:
+                cats.append(p.category)
+        facets = services.catalog_facets(db)
+        parts.append(
+            "Sport Stadion sells ONLY these brands: "
+            + "; ".join(f"{b.name} ({b.country}: {', '.join(brand_categories[b.slug])})" for b in facets.brands)
+            + ". Never present other brands (Nike, Adidas, Puma, …) as available."
+        )
+        parts.append(
+            "Categories: "
+            + ", ".join(f"{c.name} [{c.slug}] ({c.product_count} products)" for c in facets.categories)
+            + "."
+        )
+    parts += [
+        "For products, prices, stock, sizes, colours and promotions always use the tools; if they don't "
+        "have the answer, say so instead of guessing. What the store sells: browse_catalog. Finding "
+        "products: search_products, then get_product_details (colour/size stock). Buying: add_to_cart -> "
+        "view_cart -> place_order. Ask for colour and size when the customer hasn't said.",
+        "Before place_order, summarise items, total, shipping method, payment method and address, and "
+        "wait for the customer's explicit confirmation. You cannot take payment: after ordering, share "
+        "the payment instructions and the order link.",
+        f"Shipping methods: {shipping}. Payment methods: bank_transfer, e_wallet, credit_card. {STORE_POLICIES}",
+    ]
+    return "\n".join(parts)
+
+
+def refresh_instructions(db: Session) -> None:
+    """Rebuild the instructions from the database (call after seeding). The SDK reads the low-level
+    server's plain `instructions` attribute on every `initialize`; MCPServer only exposes a getter."""
+    mcp._lowlevel_server.instructions = build_instructions(db)
 
 
 # ---------- Formatting ----------
@@ -141,15 +179,43 @@ def _resolve_category(db: Session, ref: str) -> str:
     raise ToolError(f"Unknown category '{ref}'. Categories: {options}.")
 
 
-# English (and a few other) colour words the model may use -> Indonesian catalogue names.
-COLOR_ALIASES = {
-    "black": "hitam", "white": "putih", "red": "merah", "navy": "biru navy", "navy blue": "biru navy",
-    "light blue": "biru muda", "sky blue": "biru muda", "grey": "abu-abu", "gray": "abu-abu", "abu": "abu-abu",
-    "neon green": "hijau neon", "lime": "hijau neon", "army green": "hijau army", "olive": "hijau army",
-    "orange": "oranye", "yellow": "kuning", "purple": "ungu", "cream": "krem", "beige": "krem",
-    "teal": "tosca", "turquoise": "tosca", "maroon": "merah marun", "burgundy": "merah marun",
-    "blue": "biru", "green": "hijau",
-}
+def _resolve_brand(db: Session, ref: str) -> str:
+    ref_clean = ref.strip().lower()
+    brands = db.query(models.Brand).all()
+    for b in brands:
+        if ref_clean in (b.slug, b.name.lower()):
+            return b.slug
+    partial = [b for b in brands if ref_clean in b.slug or ref_clean in b.name.lower()]
+    if len(partial) == 1:
+        return partial[0].slug
+    options = ", ".join(b.name for b in sorted(brands, key=lambda b: b.name))
+    raise ToolError(f"Sport Stadion doesn't sell the brand '{ref}'. Brands sold: {options}.")
+
+
+def _resolve_sport(db: Session, ref: str) -> str:
+    sport = services.normalize_sport(ref)
+    known = sorted({s for (s,) in db.query(models.Product.sport).distinct()})
+    if sport in known:
+        return sport
+    raise ToolError(f"Unknown sport '{ref}'. Sports: {', '.join(known)}.")
+
+
+def _is_shoe_size(size: str) -> bool:
+    """EU shoe sizes are 2-digit numbers; single digits are ball sizes (3, 4, 5…)."""
+    return size.isdigit() and int(size) >= 20
+
+
+def _sizes_text(sizes: list[str]) -> str:
+    """'39, 40, 41, 42' -> '39–42' for runs of consecutive EU sizes; other sizes listed as-is."""
+    ordered = services.sort_sizes(sizes)
+    numbers = [int(s) for s in ordered if _is_shoe_size(s)]
+    others = [s for s in ordered if not _is_shoe_size(s)]
+    parts = []
+    if numbers:
+        contiguous = numbers == list(range(numbers[0], numbers[-1] + 1))
+        parts.append(f"{numbers[0]}–{numbers[-1]}" if contiguous and len(numbers) > 2 else ", ".join(map(str, numbers)))
+    parts += others
+    return ", ".join(parts)
 
 
 def _norm(text: str) -> str:
@@ -159,7 +225,7 @@ def _norm(text: str) -> str:
 def _match_color(product: models.Product, color: str) -> str:
     names = list(dict.fromkeys(v.color_name for v in product.variants))
     wanted = color.strip().lower()
-    wanted = COLOR_ALIASES.get(wanted, wanted)
+    wanted = services.COLOR_ALIASES.get(wanted, wanted)
     exact = [n for n in names if n.lower() == wanted]
     if exact:
         return exact[0]
@@ -261,39 +327,95 @@ mcp = MCPServer(
     title="Sport Stadion",
     description="Indonesian sports store: shoes, apparel, balls, rackets, bags and accessories.",
     version="1.0.0",
-    instructions=_instructions(),
+    instructions=build_instructions(),
 )
 
 
 @mcp.tool(annotations=READ_ONLY, structured_output=False)
-def search_products(
-    query: Annotated[str | None, Field(description="Keywords, Indonesian works best, e.g. 'sepatu lari', 'jersey', 'raket'")] = None,
-    category: Annotated[str | None, Field(description="Category slug or name, e.g. 'sepatu-lari', 'sepatu-bola', 'jersey-kaos', 'celana', 'bola', 'raket', 'tas', 'aksesoris'")] = None,
+def browse_catalog(
+    category: Annotated[str | None, Field(description="Category slug or name")] = None,
+    brand: Annotated[str | None, Field(description="Brand name or slug")] = None,
     gender: Literal["men", "women", "unisex", "kids"] | None = None,
-    color: Annotated[str | None, Field(description="Colour, e.g. 'Hitam' or 'black'")] = None,
-    size: Annotated[str | None, Field(description="Size, e.g. '42' (EU shoes) or 'M'")] = None,
+    sport: Annotated[str | None, Field(description="e.g. running, football, badminton (or lari, bola, …)")] = None,
+) -> str:
+    """What the store sells: categories, brands, sports, colours, sizes and price range, for the whole
+    store or a slice of it. Use for questions like 'which brands do you have?' or 'what sizes do
+    running shoes come in?'. All filters optional."""
+    with _session() as db:
+        scope = dict(
+            category=_resolve_category(db, category) if category else None,
+            brand=_resolve_brand(db, brand) if brand else None,
+            gender=gender,
+            sport=_resolve_sport(db, sport) if sport else None,
+        )
+        f = services.catalog_facets(db, **scope)
+        if f.product_count == 0:
+            return "No products match that combination. Call browse_catalog with fewer filters."
+
+        names = [
+            next((c.name for c in f.categories if c.slug == scope["category"]), None),
+            next((b.name for b in f.brands if b.slug == scope["brand"]), None),
+            gender, scope["sport"],
+        ]
+        label = " · ".join(n for n in names if n) or "Whole store"
+        lines = [f"{label}: {f.product_count} products ({f.in_stock_count} in stock, {f.on_sale_count} on sale)"]
+        if not scope["category"]:
+            lines.append("Categories: " + ", ".join(f"{c.name} [{c.slug}] ({c.product_count})" for c in f.categories))
+        if not scope["brand"]:
+            lines.append("Brands: " + ", ".join(f"{b.name} ({b.product_count})" for b in f.brands))
+        lines.append(f"Sports: {', '.join(f.sports)} | For: {', '.join(f.genders)}")
+        lines.append("Colours: " + ", ".join(c.name for c in f.colors))
+        shoe = [s for s in f.sizes if _is_shoe_size(s)]
+        apparel = [s for s in f.sizes if s in services.APPAREL_SIZES]
+        other = [s for s in f.sizes if s not in shoe and s not in apparel]
+        size_groups = [g for g in (
+            f"EU {_sizes_text(shoe)}" if shoe else "",
+            ", ".join(apparel),
+            ", ".join(other),
+        ) if g]
+        lines.append("Sizes: " + " | ".join(size_groups))
+        lines.append(f"Price range: {_price(f.price_min, f.price_max)}")
+        lines.append("Use search_products with these filters to list the products.")
+        return "\n".join(lines)
+
+
+@mcp.tool(annotations=READ_ONLY, structured_output=False)
+def search_products(
+    query: Annotated[str | None, Field(description="Keywords, e.g. 'sepatu lari', 'jersey', 'running shoes'")] = None,
+    category: Annotated[str | None, Field(description="Category slug or name")] = None,
+    brand: Annotated[str | None, Field(description="Brand name or slug")] = None,
+    sport: str | None = None,
+    gender: Literal["men", "women", "unisex", "kids"] | None = None,
+    color: Annotated[str | None, Field(description="e.g. 'Hitam' or 'black'")] = None,
+    size: Annotated[str | None, Field(description="e.g. '42' (EU shoes) or 'M'")] = None,
     min_price: Annotated[int | None, Field(description="Rupiah")] = None,
     max_price: Annotated[int | None, Field(description="Rupiah")] = None,
+    on_sale: Annotated[bool, Field(description="Only discounted products")] = False,
     sort: Literal["relevance", "price_asc", "price_desc", "rating", "newest"] = "relevance",
     limit: Annotated[int, Field(ge=1, le=10)] = 5,
+    page: Annotated[int, Field(ge=1)] = 1,
 ) -> str:
-    """Search the catalogue. Returns matching products with slug, price, colours and sizes."""
+    """Find products by keywords and/or filters. Lists slug, price, colours, sizes and stock;
+    sold-out items are marked and listed last."""
     with _session() as db:
         filters = dict(
             category=_resolve_category(db, category) if category else None,
+            brand=_resolve_brand(db, brand) if brand else None,
+            sport=_resolve_sport(db, sport) if sport else None,
             gender=gender,
             min_price=min_price,
             max_price=max_price,
+            on_sale=on_sale,
             sort=sort,
-            in_stock=True,
         )
+        color_name = size_label = None
         if color:
-            alias = COLOR_ALIASES.get(color.strip().lower(), color.strip().lower())
+            alias = services.COLOR_ALIASES.get(color.strip().lower(), color.strip().lower())
             known = {c for (c,) in db.query(models.ProductVariant.color_name).distinct()}
-            filters["color"] = next((c for c in known if c.lower() == alias), color)
+            color_name = filters["color"] = next((c for c in known if c.lower() == alias), color)
         if size:
             known_sizes = [s for (s,) in db.query(models.ProductVariant.size).distinct()]
-            filters["size"] = _match_size(known_sizes, size) or size
+            size_label = filters["size"] = _match_size(known_sizes, size) or size
 
         results = services.search_products(db, q=query, **filters)
         note = ""
@@ -301,26 +423,53 @@ def search_products(
             results = services.search_products(db, q=query, partial_match=True, **filters)
             note = "No product matched all keywords; showing closest matches.\n"
         if not results:
-            return "No products found. Try fewer filters or different keywords."
+            return "No products found. Try fewer filters or different keywords, or call browse_catalog to see what's available."
 
-        lines = [f"{note}Found {len(results)} product(s), showing {min(limit, len(results))}:"]
-        for n, p in enumerate(results[:limit], 1):
+        # Stock for the requested colour/size (or any variant), sold-out products last.
+        orm = {p.slug: p for p in services.product_query(db).filter(models.Product.slug.in_([r.slug for r in results]))}
+
+        def matching(slug: str) -> list[models.ProductVariant]:
+            return [v for v in orm[slug].variants
+                    if (color_name is None or v.color_name == color_name) and (size_label is None or v.size == size_label)]
+
+        results.sort(key=lambda r: not any(v.stock > 0 for v in matching(r.slug)))
+
+        total = len(results)
+        pages = (total + limit - 1) // limit
+        if page > pages:
+            return f"Page {page} is empty: {total} product(s) fit on {pages} page(s)."
+        shown = results[(page - 1) * limit : page * limit]
+
+        page_note = f", page {page} of {pages}" if pages > 1 else ""
+        lines = [f"{note}Found {total} product(s){page_note}:"]
+        for n, p in enumerate(shown, (page - 1) * limit + 1):
             was = f" (was {rp(p.compare_at_price)})" if p.compare_at_price else ""
             lines.append(
                 f"{n}. {p.name} — {_price(p.price_min, p.price_max)}{was}\n"
                 f"   slug: {p.slug} | {p.brand} · {p.category} · {p.gender} | rating {p.rating}\n"
-                f"   colours: {', '.join(c.name for c in p.colors)} | sizes: {', '.join(p.sizes)}"
+                f"   colours: {', '.join(c.name for c in p.colors)} | sizes: {_sizes_text(p.sizes)}"
             )
-        if len(results) > limit:
-            lines.append(f"{len(results) - limit} more — narrow the search or raise limit.")
+            in_stock = [v for v in matching(p.slug) if v.stock > 0]
+            if color_name and size_label:
+                stock = sum(v.stock for v in in_stock)
+                lines.append(f"   {color_name} {size_label}: " + (f"{stock} in stock" if stock else "SOLD OUT"))
+            elif color_name:
+                lines.append(f"   {color_name} sizes in stock: " + (_sizes_text([v.size for v in in_stock]) or "SOLD OUT"))
+            elif size_label:
+                lines.append(f"   size {size_label} in stock in: " + (", ".join(v.color_name for v in in_stock) or "SOLD OUT"))
+            elif not in_stock:
+                lines.append("   SOLD OUT")
+        if page < pages:
+            lines.append(f"More results: call again with page={page + 1}.")
         return "\n".join(lines)
 
 
 @mcp.tool(annotations=READ_ONLY, structured_output=False)
 def get_product_details(
     product: Annotated[str, Field(description="Product slug (preferred) or name")],
+    ctx: Context,
 ) -> str:
-    """Full product info: description, specs, material, and stock per colour and size."""
+    """Full product info: description, specs, material, care, brand, and stock per colour and size."""
     with _session() as db:
         p = _resolve_product(db, product)
         d = services.product_detail(p)
@@ -336,6 +485,8 @@ def get_product_details(
         if d.specs:
             lines.append("Specs: " + "; ".join(f"{k}: {v}" for k, v in d.specs.items()))
         lines.append(f"Material: {d.material}")
+        lines.append(f"Care: {d.care_instructions}")
+        lines.append(f"About {d.brand}: {d.brand_info.description}")
         lines.append("Stock by colour:")
         for color in d.colors:
             vs = [v for v in d.variants if v.color_name == color.name]
@@ -350,6 +501,54 @@ def get_product_details(
             lines.append("Price by size: " + ", ".join(by_size))
         if d.size_chart:
             lines.append("A size guide is available via get_size_guide.")
+        lines.append(f"Product page: {_base_url(ctx)}/product/{d.slug}")
+        return "\n".join(lines)
+
+
+@mcp.tool(annotations=READ_ONLY, structured_output=False)
+def compare_products(
+    products: Annotated[list[str], Field(min_length=2, max_length=4, description="2–4 product slugs or names")],
+) -> str:
+    """Compare 2–4 products side by side: price, rating, key specs, colours and sizes in stock."""
+    with _session() as db:
+        details = [services.product_detail(_resolve_product(db, ref)) for ref in products]
+        # Spec keys that at least two of the products share, in the first product's order.
+        keys: list[str] = []
+        for d in details:
+            for key in d.specs:
+                if key not in keys and sum(key in other.specs for other in details) >= 2:
+                    keys.append(key)
+
+        lines = [f"Comparing {len(details)} products:"]
+        for n, d in enumerate(details, 1):
+            was = f" (was {rp(d.compare_at_price)})" if d.compare_at_price else ""
+            in_stock = [v for v in d.variants if v.stock > 0]
+            lines.append(f"{n}. {d.name} [{d.slug}] — {_price(d.price_min, d.price_max)}{was}")
+            lines.append(f"   {d.brand} · {d.category} · {d.gender} · {d.sport} | rating {d.rating} ({d.review_count} reviews)")
+            if keys:
+                lines.append("   " + "; ".join(f"{k}: {d.specs.get(k, '-')}" for k in keys))
+            if d.highlights:
+                lines.append("   highlights: " + "; ".join(d.highlights[:3]))
+            lines.append(
+                "   in stock: " + (", ".join(dict.fromkeys(v.color_name for v in in_stock)) or "SOLD OUT")
+                + (f" | sizes {_sizes_text([v.size for v in in_stock])}" if in_stock else "")
+            )
+        return "\n".join(lines)
+
+
+@mcp.tool(annotations=READ_ONLY, structured_output=False)
+def list_promotions() -> str:
+    """Active promo codes and their conditions, plus the free-shipping threshold."""
+    with _session() as db:
+        promos = db.query(models.PromoCode).filter(models.PromoCode.active.is_(True)).all()
+        lines = ["Active promo codes:" if promos else "No promo codes are active right now."]
+        for promo in promos:
+            minimum = f" (min. spend {rp(promo.min_subtotal)})" if promo.min_subtotal else ""
+            lines.append(f"- {promo.code}: {promo.description}{minimum}")
+        regular = services.SHIPPING_METHODS["regular"]
+        lines.append(f"Free Regular shipping on orders over {rp(regular['free_over'])} (after discount).")
+        if promos:
+            lines.append("Apply a code with apply_promo_code; one code per cart.")
         return "\n".join(lines)
 
 

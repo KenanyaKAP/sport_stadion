@@ -17,7 +17,7 @@ from sqlalchemy.orm import Session
 
 from . import models, services
 from .database import Base, SessionLocal, engine, get_db
-from .mcp_server import mcp
+from .mcp_server import mcp, refresh_instructions
 from .routers import cart, catalog, orders
 from .seed import seed_if_empty
 
@@ -29,6 +29,7 @@ async def lifespan(_: FastAPI):
     Base.metadata.create_all(engine)
     with SessionLocal() as db:
         seed_if_empty(db)
+        refresh_instructions(db)
     async with mcp.session_manager.run():
         yield
 

@@ -40,18 +40,25 @@ Endpoint MCP (Streamable HTTP, JSON-RPC) ada di **`/mcp`** pada server yang sama
 
 | Tool | Fungsi |
 |---|---|
-| `search_products` | Cari produk (kata kunci, kategori, gender, warna, ukuran, harga, urutan) |
-| `get_product_details` | Deskripsi, spesifikasi, stok per warna × ukuran |
+| `browse_catalog` | Apa saja yang dijual: kategori, brand, olahraga, warna, ukuran, rentang harga (seluruh toko atau per kategori/brand/gender/olahraga) |
+| `search_products` | Cari produk: kata kunci (Indonesia/Inggris), kategori, brand, olahraga, gender, warna, ukuran, harga, diskon, urutan, halaman. Produk habis tetap tampil dengan label `SOLD OUT` |
+| `get_product_details` | Deskripsi, spesifikasi, material, perawatan, info brand, stok per warna × ukuran, link halaman produk |
 | `get_size_guide` | Tabel ukuran + rekomendasi dari panjang kaki / lingkar dada |
+| `compare_products` | Bandingkan 2–4 produk: harga, rating, spesifikasi yang sama-sama dimiliki, stok |
+| `list_promotions` | Kode promo aktif + syarat, info gratis ongkir |
 | `add_to_cart` | Tambah produk (warna + ukuran) ke keranjang akun |
 | `view_cart` | Isi keranjang bernomor, total, opsi ongkir, link web `/cart?cart=…` |
 | `update_cart_item` | Ubah jumlah item (0 = hapus) berdasarkan nomor dari `view_cart` |
 | `apply_promo_code` | Pasang/lepas kode promo |
-| `place_order` | Checkout. Nama/HP/alamat yang tidak diisi diambil dari order terakhir akun |
+| `place_order` | Checkout. Nama/HP/alamat yang tidak diisi diambil dari order terakhir akun. Ditandai `_meta.conversify/requiresConfirmation` |
 | `get_order_status` | Status satu order, atau 5 order terakhir |
-| `cancel_order` | Batalkan order yang belum dikirim |
+| `cancel_order` | Batalkan order yang belum dikirim (juga butuh konfirmasi) |
 
-Tool dirancang untuk model kecil on-device: hasil berupa teks ringkas, input toleran (slug atau nama produk, `black`→`Hitam`, `eu 42`→`42`), dan pesan error memberi tahu model langkah berikutnya. Schema tool dirampingkan (~1.400 token untuk 10 tool).
+Pembayaran sengaja tidak tersedia lewat MCP; dilakukan di halaman order web (link ada di hasil `place_order`).
+
+`instructions` dibangun dari database saat server start: daftar brand dan kategori yang benar-benar dijual, aturan "jangan sebut brand lain", ongkir, metode bayar, dan kebijakan toko.
+
+Tool dirancang untuk model kecil on-device: hasil berupa teks ringkas, input toleran (slug atau nama produk, `black`→`Hitam`, `eu 42`→`42`), dan pesan error memberi tahu model langkah berikutnya. Schema tool dirampingkan (~1.850 token untuk 13 tool, ditambah ~500 token `instructions`).
 
 Tes manual dengan MCP Inspector:
 
@@ -85,8 +92,8 @@ Semua harga dalam Rupiah (integer).
 | GET | `/api/info` | Handshake: nama toko, versi API, jumlah produk (dipakai Conversify untuk cek koneksi) |
 | GET | `/api/categories` | Daftar kategori + jumlah produk |
 | GET | `/api/brands` | Daftar brand |
-| GET | `/api/facets` | Semua nilai filter (kategori, brand, olahraga, gender, warna, ukuran, rentang harga) |
-| GET | `/api/products` | Cari & filter: `q, category, brand, sport, gender, color, size, min_price, max_price, in_stock, sort, page, page_size` |
+| GET | `/api/facets` | Nilai filter (kategori, brand, olahraga, gender, warna, ukuran, rentang harga, jumlah stok/diskon); opsional dibatasi `category, brand, gender, sport` |
+| GET | `/api/products` | Cari & filter: `q, category, brand, sport, gender, color, size, min_price, max_price, in_stock, on_sale, sort, page, page_size` |
 | GET | `/api/products/{slug}` | Detail lengkap + semua varian & stok |
 | GET | `/api/variants/{sku}` | Cek satu SKU (harga, stok) |
 | POST | `/api/carts` | Buat keranjang baru |

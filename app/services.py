@@ -80,6 +80,43 @@ def payment_instructions(order: models.Order) -> str | None:
 # ---------- Catalog ----------
 
 SORTS = ("relevance", "newest", "price_asc", "price_desc", "rating")
+GENDERS = ["men", "women", "unisex", "kids"]
+APPAREL_SIZES = ["XS", "S", "M", "L", "XL", "XXL"]
+
+# Colour words customers (or a model) may use -> Indonesian catalogue colour names.
+COLOR_ALIASES = {
+    "black": "hitam", "white": "putih", "red": "merah", "navy": "biru navy", "navy blue": "biru navy",
+    "light blue": "biru muda", "sky blue": "biru muda", "grey": "abu-abu", "gray": "abu-abu", "abu": "abu-abu",
+    "neon green": "hijau neon", "lime": "hijau neon", "army green": "hijau army", "olive": "hijau army",
+    "orange": "oranye", "yellow": "kuning", "purple": "ungu", "cream": "krem", "beige": "krem",
+    "teal": "tosca", "turquoise": "tosca", "maroon": "merah marun", "burgundy": "merah marun",
+    "blue": "biru", "green": "hijau",
+}
+
+# English (and loose) search words -> the Indonesian words the catalogue uses.
+QUERY_SYNONYMS = {
+    "shoe": "sepatu", "shoes": "sepatu", "sneaker": "sepatu", "sneakers": "sepatu", "boots": "sepatu",
+    "ball": "bola", "balls": "bola", "racket": "raket", "racquet": "raket",
+    "bag": "tas", "backpack": "tas", "duffel": "tas", "shorts": "celana", "pants": "celana",
+    "trousers": "celana", "sock": "kaos kaki", "socks": "kaos kaki", "bottle": "botol",
+    "cap": "topi", "hat": "topi", "shirt": "kaos", "tshirt": "kaos", "t-shirt": "kaos", "tee": "kaos",
+    "running": "lari", "jogging": "lari", "soccer": "bola", "kids": "anak", "accessories": "aksesoris",
+    **COLOR_ALIASES,
+}
+
+# Indonesian / loose sport names -> the `sport` values products are tagged with.
+SPORT_ALIASES = {
+    "lari": "running", "jogging": "running", "run": "running", "trail": "trail running",
+    "sepak bola": "football", "sepakbola": "football", "soccer": "football", "bola": "football",
+    "basket": "basketball", "bola basket": "basketball", "voli": "volleyball", "bola voli": "volleyball",
+    "volley": "volleyball", "bulutangkis": "badminton", "bulu tangkis": "badminton",
+    "gym": "training", "fitness": "training", "latihan": "training",
+}
+
+
+def normalize_sport(sport: str) -> str:
+    key = sport.strip().lower()
+    return SPORT_ALIASES.get(key, key)
 
 
 def product_query(db: Session):
@@ -88,6 +125,10 @@ def product_query(db: Session):
         selectinload(models.Product.brand),
         selectinload(models.Product.category),
     )
+
+
+def _term_matches(term: str, text: str) -> bool:
+    return term in text or (alt := QUERY_SYNONYMS.get(term)) is not None and alt in text
 
 
 def _search_text(p: models.Product) -> str:
@@ -110,21 +151,25 @@ def search_products(
     min_price: int | None = None,
     max_price: int | None = None,
     in_stock: bool = False,
+    on_sale: bool = False,
     sort: str = "relevance",
     partial_match: bool = False,
 ) -> list[schemas.ProductSummary]:
     """Filter + sort the catalog. Every word of `q` must match (name, description, brand,
-    category, sport or colour). With `partial_match`, if nothing matches all words, products
-    matching the most words are returned instead."""
+    category, sport or colour; English words like "shoes" or "black" also match their Indonesian
+    catalogue words). With `partial_match`, if nothing matches all words, products matching the
+    most words are returned instead."""
     query = product_query(db).join(models.Product.brand).join(models.Product.category)
     if category:
         query = query.filter(models.Category.slug == category)
     if brand:
         query = query.filter(models.Brand.slug == brand)
     if sport:
-        query = query.filter(func.lower(models.Product.sport) == sport.lower())
+        query = query.filter(func.lower(models.Product.sport) == normalize_sport(sport))
     if gender:
         query = query.filter(models.Product.gender == gender)
+    if on_sale:
+        query = query.filter(models.Product.compare_at_price.is_not(None))
 
     variant_filters = []
     if color:
@@ -144,7 +189,8 @@ def search_products(
 
     if q and q.split():
         terms = [t.lower() for t in q.split()]
-        scored = [(sum(t in _search_text(p) for t in terms), p) for p in products]
+        texts = {p.id: _search_text(p) for p in products}
+        scored = [(sum(_term_matches(t, texts[p.id]) for t in terms), p) for p in products]
         full = [p for score, p in scored if score == len(terms)]
         if full or not partial_match:
             products = full
@@ -166,6 +212,66 @@ def search_products(
     return [s for _, s in summaries]
 
 
+def sort_sizes(sizes: set[str] | list[str]) -> list[str]:
+    """EU shoe sizes numerically, then apparel sizes XS–XXL, then everything else alphabetically."""
+    def key(size: str):
+        if size.isdigit():
+            return (0, int(size), size)
+        if size in APPAREL_SIZES:
+            return (1, APPAREL_SIZES.index(size), size)
+        return (2, 0, size)
+    return sorted(set(sizes), key=key)
+
+
+def catalog_facets(
+    db: Session,
+    *,
+    category: str | None = None,
+    brand: str | None = None,
+    gender: str | None = None,
+    sport: str | None = None,
+) -> schemas.FacetsOut:
+    """What the catalogue (or a slice of it) offers: categories and brands with product counts,
+    sports, genders, colours, sizes, price range and stock/sale counts."""
+    products = search_products(db, category=category, brand=brand, gender=gender, sport=sport)
+    category_counts: dict[str, int] = {}
+    brand_counts: dict[str, int] = {}
+    colors: dict[str, str] = {}
+    sizes: set[str] = set()
+    for p in products:
+        category_counts[p.category_slug] = category_counts.get(p.category_slug, 0) + 1
+        brand_counts[p.brand_slug] = brand_counts.get(p.brand_slug, 0) + 1
+        for c in p.colors:
+            colors.setdefault(c.name, c.hex)
+        sizes.update(p.sizes)
+
+    categories = [
+        schemas.CategoryOut(slug=c.slug, name=c.name, description=c.description, icon=c.icon,
+                            product_count=category_counts[c.slug])
+        for c in db.query(models.Category).order_by(models.Category.id)
+        if c.slug in category_counts
+    ]
+    brands = [
+        schemas.BrandOut(slug=b.slug, name=b.name, country=b.country, description=b.description,
+                         product_count=brand_counts[b.slug])
+        for b in db.query(models.Brand).order_by(models.Brand.name)
+        if b.slug in brand_counts
+    ]
+    return schemas.FacetsOut(
+        categories=categories,
+        brands=brands,
+        sports=sorted({p.sport for p in products}),
+        genders=[g for g in GENDERS if any(p.gender == g for p in products)],
+        colors=[schemas.ColorOption(name=n, hex=colors[n]) for n in sorted(colors)],
+        sizes=sort_sizes(sizes),
+        price_min=min((p.price_min for p in products), default=0),
+        price_max=max((p.price_max for p in products), default=0),
+        product_count=len(products),
+        in_stock_count=sum(p.in_stock for p in products),
+        on_sale_count=sum(p.compare_at_price is not None for p in products),
+    )
+
+
 def product_summary(p: models.Product) -> schemas.ProductSummary:
     prices = [v.price for v in p.variants] or [p.base_price]
     colors: dict[str, str] = {}
@@ -178,6 +284,7 @@ def product_summary(p: models.Product) -> schemas.ProductSummary:
         slug=p.slug,
         name=p.name,
         brand=p.brand.name,
+        brand_slug=p.brand.slug,
         category=p.category.name,
         category_slug=p.category.slug,
         icon=p.icon or p.category.icon,

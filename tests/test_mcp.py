@@ -62,11 +62,17 @@ def test_handshake_and_tool_list(mcp):
     })
     assert init["serverInfo"]["name"] == "Sport Stadion"
     assert "place_order" in init["instructions"]
+    # Catalogue facts come from the database, so the model never has to guess brands.
+    for brand in ("Velocita", "Garuda Sport", "Kinetik", "Apex Pro", "Nordline", "Shuttlecraft"):
+        assert brand in init["instructions"]
+    assert "sells ONLY these brands" in init["instructions"]
+    assert "Sepatu Lari [sepatu-lari]" in init["instructions"]
 
     tools = {t["name"]: t for t in mcp.rpc("tools/list")["tools"]}
     assert set(tools) == {
-        "search_products", "get_product_details", "get_size_guide", "add_to_cart", "view_cart",
-        "update_cart_item", "apply_promo_code", "place_order", "get_order_status", "cancel_order",
+        "browse_catalog", "search_products", "get_product_details", "get_size_guide", "compare_products",
+        "list_promotions", "add_to_cart", "view_cart", "update_cart_item", "apply_promo_code",
+        "place_order", "get_order_status", "cancel_order",
     }
     assert tools["view_cart"]["annotations"]["readOnlyHint"] is True
     assert tools["cancel_order"]["annotations"]["destructiveHint"] is True
@@ -76,6 +82,8 @@ def test_handshake_and_tool_list(mcp):
     # Compacted schemas: no pydantic titles or nullable anyOf noise
     assert "title" not in str(tools["search_products"]["inputSchema"])
     assert "anyOf" not in str(tools["place_order"]["inputSchema"])
+    # The tool list is part of every prompt; keep it small for on-device models.
+    assert len(str(tools)) < 8_500
 
 
 def test_catalog_tools_are_lenient(mcp):
@@ -143,6 +151,55 @@ def test_full_order_flow(client, mcp):
     assert "cancelled" in mcp.ok("cancel_order", order_number=number)
     assert stock(client, variant["sku"]) == before
     assert "cannot be cancelled" in mcp.err("cancel_order", order_number=number)
+
+
+def test_browse_catalog(mcp):
+    store = mcp.ok("browse_catalog")
+    assert store.startswith("Whole store: 29 products")
+    assert "Brands: Apex Pro (5), Garuda Sport (6), Kinetik (8), Nordline (3), Shuttlecraft (3), Velocita (4)" in store
+    assert "Nike" not in store
+    assert "EU 30–45" in store and "XS, S, M, L, XL, XXL" in store
+
+    scoped = mcp.ok("browse_catalog", category="Sepatu Lari", brand="velocita")
+    assert scoped.startswith("Sepatu Lari · Velocita: 4 products")
+    assert "Sizes: EU 36–45" in scoped and "Categories:" not in scoped
+
+    assert "doesn't sell the brand 'Nike'" in mcp.err("browse_catalog", brand="Nike")
+
+
+def test_search_filters_and_stock(client, mcp):
+    text = mcp.ok("search_products", query="running shoes", color="black", size="42")
+    assert "velocita-aero-glide-3" in text and "Hitam 42:" in text
+
+    assert all(line.count("(was ") for line in mcp.ok("search_products", on_sale=True, limit=10).splitlines()
+               if line[:1].isdigit())
+    assert "Velocita" not in mcp.ok("search_products", brand="kinetik", limit=10)
+    assert "slug: kinetik-run-cap" in mcp.ok("search_products", sport="lari", limit=10)
+
+    page2 = mcp.ok("search_products", sport="running", limit=2, page=2)
+    assert "page 2 of 3" in page2 and page2.splitlines()[1].startswith("3. ")
+    assert "Page 9 is empty" in mcp.ok("search_products", sport="running", limit=2, page=9)
+
+    # A colour/size combination that is sold out is still listed, marked, and sorted last.
+    product = client.get("/api/products/velocita-aero-glide-3").json()
+    sold_out = next(v for v in product["variants"] if v["stock"] == 0)
+    text = mcp.ok("search_products", query="aero glide", color=sold_out["color_name"], size=sold_out["size"])
+    assert f"{sold_out['color_name']} {sold_out['size']}: SOLD OUT" in text
+
+
+def test_compare_and_promotions(mcp):
+    text = mcp.ok("compare_products", products=["Aero Glide 3", "velocita-carbon-elite"])
+    assert "Comparing 2 products" in text and "Heel-to-toe drop: 8 mm" in text
+    assert "at least 2 items" in mcp.err("compare_products", products=["Aero Glide 3"])
+
+    promos = mcp.ok("list_promotions")
+    assert "STADION10" in promos and "HEMAT50" in promos and "Free Regular shipping" in promos
+
+
+def test_product_details_complete(mcp):
+    text = mcp.ok("get_product_details", product="velocita-aero-glide-3")
+    assert "Care:" in text and "About Velocita:" in text
+    assert "Product page: http://Kens-MacBook-Pro.local:8765/product/velocita-aero-glide-3" in text
 
 
 def test_helpful_errors(client, mcp):

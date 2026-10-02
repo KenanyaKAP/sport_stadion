@@ -25,6 +25,7 @@ class BrandOut(ORM):
     name: str
     country: str
     description: str
+    product_count: int = 0
 
 
 class VariantOut(ORM):
@@ -47,6 +48,7 @@ class ProductSummary(BaseModel):
     slug: str
     name: str
     brand: str
+    brand_slug: str
     category: str
     category_slug: str
     icon: str
@@ -90,6 +92,9 @@ class FacetsOut(BaseModel):
     sizes: list[str]
     price_min: int
     price_max: int
+    product_count: int = 0
+    in_stock_count: int = 0
+    on_sale_count: int = 0
 
 
 # ---------- Cart ----------

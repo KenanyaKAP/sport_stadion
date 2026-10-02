@@ -27,6 +27,19 @@ def test_catalog_listing_and_filters(client):
     assert any("futsal" in p["slug"] for p in search["items"])
 
 
+def test_on_sale_and_scoped_facets(client):
+    sale = client.get("/api/products", params={"on_sale": True, "page_size": 100}).json()
+    assert sale["total"] == 6 and all(p["compare_at_price"] for p in sale["items"])
+
+    all_facets = client.get("/api/facets").json()
+    assert len(all_facets["categories"]) == 9 and all_facets["product_count"] == 29
+
+    running = client.get("/api/facets", params={"category": "sepatu-lari"}).json()
+    assert [c["slug"] for c in running["categories"]] == ["sepatu-lari"]
+    assert {b["slug"] for b in running["brands"]} == {"velocita", "kinetik"}
+    assert "M" not in running["sizes"] and "42" in running["sizes"]
+
+
 def test_product_detail(client):
     p = client.get("/api/products/velocita-aero-glide-3").json()
     assert p["specs"]["Heel-to-toe drop"] == "8 mm"
