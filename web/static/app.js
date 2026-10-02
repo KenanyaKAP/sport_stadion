@@ -24,6 +24,27 @@ const API = {
   del: (p) => API.req("DELETE", p),
 };
 
+// ---------- Account (email sign-in, no password: dummy store) ----------
+// Signed in, the shop uses the account's cart — the same one Conversify chats with this email use.
+const Account = {
+  KEY: "sportstadion.account",
+  email() {
+    try { return localStorage.getItem(this.KEY); } catch { return null; }
+  },
+  async signIn(email) {
+    const normalized = email.trim().toLowerCase();
+    // Any items already in this browser's anonymous cart move into the account cart.
+    const cart = await API.post("/carts/account", { email: normalized, merge_cart_id: Cart.id() });
+    try { localStorage.setItem(this.KEY, normalized); } catch {}
+    Cart.setId(cart.id);
+    return cart;
+  },
+  signOut() {
+    try { localStorage.removeItem(this.KEY); } catch {}
+    Cart.setId(null);
+  },
+};
+
 // ---------- Cart (id persisted per browser) ----------
 const Cart = {
   KEY: "sportstadion.cart_id",
@@ -37,6 +58,13 @@ const Cart = {
     try { id ? localStorage.setItem(this.KEY, id) : localStorage.removeItem(this.KEY); } catch {}
   },
   async get(shipping) {
+    // Signed in: always the account's current cart (chats may have changed or replaced it).
+    const email = Account.email();
+    if (email) {
+      const cart = await API.post("/carts/account", { email });
+      this.setId(cart.id);
+      return shipping ? API.get(`/carts/${cart.id}?shipping_method=${shipping}`) : cart;
+    }
     const id = this.id();
     if (!id) return null;
     try {
@@ -191,6 +219,7 @@ function renderChrome() {
       <nav class="nav-links">
         <a class="hide-sm" href="/orders">Pesanan Saya</a>
         <a class="hide-sm" href="/docs" target="_blank">API</a>
+        <button class="account-btn" id="account-btn" type="button">${accountLabel()}</button>
         <a class="cart-link" href="/cart" aria-label="Keranjang">${ICON_SVG.cart}<span class="cart-badge" id="cart-badge"></span></a>
       </nav>
     </div>`;
@@ -204,12 +233,71 @@ function renderChrome() {
     </div>`;
   document.body.append(footer);
 
+  document.body.append(accountDialog());
+  document.getElementById("account-btn").onclick = () => openAccountDialog();
+
   const toast = document.createElement("div");
   toast.className = "toast";
   toast.id = "toast";
   document.body.append(toast);
 
   Cart.get().then(updateBadge).catch(() => {});
+}
+
+// ---------- Account UI ----------
+function accountLabel() {
+  const email = Account.email();
+  return email ? `<span class="avatar">${esc(email[0].toUpperCase())}</span><span class="hide-sm">${esc(email)}</span>` : "Masuk";
+}
+
+function accountDialog() {
+  const dialog = document.createElement("dialog");
+  dialog.className = "account-dialog";
+  dialog.id = "account-dialog";
+  return dialog;
+}
+
+/** Sign-in form when signed out; account menu when signed in. `onSignedIn` runs instead of a reload. */
+function openAccountDialog({ onSignedIn } = {}) {
+  const dialog = document.getElementById("account-dialog");
+  const email = Account.email();
+  dialog.innerHTML = email ? `
+      <h3>Akun</h3>
+      <p class="muted" style="margin:4px 0 16px">Masuk sebagai <b>${esc(email)}</b></p>
+      <a class="btn btn-primary btn-block" href="/orders">Pesanan Saya</a>
+      <a class="btn btn-outline btn-block" href="/cart" style="margin-top:8px">Keranjang</a>
+      <button class="btn btn-block" id="sign-out" style="margin-top:8px">Keluar</button>
+      <button class="dialog-close" aria-label="Tutup">×</button>` : `
+      <h3>Masuk</h3>
+      <p class="muted" style="margin:4px 0 16px">Pakai email yang sama dengan di Conversify untuk melihat keranjang & pesanan dari chat. Tanpa password (toko simulasi).</p>
+      <form id="sign-in-form">
+        <div class="field">
+          <label for="sign-in-email">Email</label>
+          <input class="input" id="sign-in-email" type="email" required placeholder="nama@email.com" autocomplete="email">
+        </div>
+        <div class="msg err" id="sign-in-msg" style="margin:8px 0"></div>
+        <button class="btn btn-primary btn-block" type="submit">Masuk</button>
+      </form>
+      <button class="dialog-close" aria-label="Tutup">×</button>`;
+
+  dialog.querySelector(".dialog-close").onclick = () => dialog.close();
+  dialog.querySelector("#sign-out")?.addEventListener("click", () => {
+    Account.signOut();
+    location.reload();
+  });
+  dialog.querySelector("#sign-in-form")?.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const input = dialog.querySelector("#sign-in-email");
+    try {
+      await Account.signIn(input.value);
+      dialog.close();
+      onSignedIn ? onSignedIn() : location.reload();
+    } catch (err) {
+      dialog.querySelector("#sign-in-msg").textContent = err.message;
+    }
+  });
+  dialog.showModal();
+  dialog.querySelector("input")?.focus();
 }
 
 function updateBadge(cart) {

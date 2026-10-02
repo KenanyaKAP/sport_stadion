@@ -12,13 +12,15 @@
 <body>
   <main class="container" style="max-width:820px; padding-bottom:60px">
     <h1 class="page-title">Pesanan Saya</h1>
-    <form class="panel" id="lookup" style="display:flex; gap:10px; align-items:end; flex-wrap:wrap">
-      <div class="field" style="flex:1; min-width:220px">
-        <label for="email">Email yang dipakai saat checkout</label>
-        <input class="input" id="email" name="email" type="email" required placeholder="nama@email.com">
-      </div>
-      <button class="btn btn-primary">Cari Pesanan</button>
-    </form>
+    <div class="panel hidden" id="signed-in" style="display:flex; gap:10px; align-items:center; justify-content:space-between; flex-wrap:wrap">
+      <div>Pesanan untuk <b id="signed-in-email"></b></div>
+      <button class="btn btn-outline btn-sm" id="refresh">Muat ulang</button>
+    </div>
+    <div class="panel hidden" id="signed-out">
+      <h3 style="font-size:22px; margin-bottom:6px">Masuk untuk melihat pesanan</h3>
+      <p class="muted" style="margin:0 0 14px">Pakai email yang sama dengan di Conversify atau saat checkout. Dari halaman pesanan kamu bisa mensimulasikan pembayaran.</p>
+      <button class="btn btn-primary" id="sign-in">Masuk dengan email</button>
+    </div>
     <div id="list" style="margin-top:16px"></div>
   </main>
 
@@ -46,12 +48,16 @@ async function search(email) {
 }
 
 document.addEventListener("DOMContentLoaded", () => {
-  let saved = "";
-  try { saved = JSON.parse(localStorage.getItem("sportstadion.profile"))?.email ?? ""; } catch {}
-  const input = document.getElementById("email");
-  input.value = new URLSearchParams(location.search).get("email") ?? saved;
-  document.getElementById("lookup").onsubmit = (e) => { e.preventDefault(); search(input.value.trim()); };
-  if (input.value) search(input.value);
+  const email = Account.email();
+  if (email) {
+    document.getElementById("signed-in").classList.remove("hidden");
+    document.getElementById("signed-in-email").textContent = email;
+    document.getElementById("refresh").onclick = () => search(email);
+    search(email);
+  } else {
+    document.getElementById("signed-out").classList.remove("hidden");
+    document.getElementById("sign-in").onclick = () => openAccountDialog();
+  }
 });
 </script>
 </body>

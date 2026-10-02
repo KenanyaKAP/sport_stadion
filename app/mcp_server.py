@@ -9,7 +9,6 @@ One account has one active cart, shared by every chat that sends the same email.
 """
 
 import re
-import uuid
 from contextlib import contextmanager
 from typing import Annotated, Literal
 
@@ -133,20 +132,6 @@ def _account_email(ctx: Context) -> str:
             "Tell the user to set their email in the app settings."
         )
     return email
-
-
-def _account_cart(db: Session, email: str, create: bool = True) -> models.Cart | None:
-    cart = (
-        db.query(models.Cart)
-        .filter(models.Cart.customer_email == email)
-        .order_by(models.Cart.created_at.desc())
-        .first()
-    )
-    if cart is None and create:
-        cart = models.Cart(id=str(uuid.uuid4()), customer_email=email)
-        db.add(cart)
-        db.commit()
-    return cart
 
 
 def _resolve_product(db: Session, ref: str) -> models.Product:
@@ -616,7 +601,7 @@ def add_to_cart(
     with _session() as db:
         p = _resolve_product(db, product)
         variant = _resolve_variant(p, color, size)
-        cart = _account_cart(db, email)
+        cart = services.account_cart(db, email)
         services.add_to_cart(db, cart, variant, quantity)
         return f"Added {quantity} × {p.name} ({variant.color_name}, size {variant.size}).\n" + _cart_text(
             db, cart, _base_url(ctx)
@@ -628,7 +613,7 @@ def view_cart(ctx: Context) -> str:
     """Show the customer's cart: numbered items, totals, shipping options and a web link."""
     email = _account_email(ctx)
     with _session() as db:
-        cart = _account_cart(db, email, create=False)
+        cart = services.account_cart(db, email, create=False)
         return _cart_text(db, cart, _base_url(ctx)) if cart else "The cart is empty."
 
 
@@ -641,7 +626,7 @@ def update_cart_item(
     """Change the quantity of a cart item, or remove it with quantity 0."""
     email = _account_email(ctx)
     with _session() as db:
-        cart = _account_cart(db, email, create=False)
+        cart = services.account_cart(db, email, create=False)
         if not cart or not cart.items:
             return "The cart is empty."
         if item_number > len(cart.items):
@@ -661,7 +646,7 @@ def apply_promo_code(
     """Apply a promo code to the customer's cart (or remove it with an empty code)."""
     email = _account_email(ctx)
     with _session() as db:
-        cart = _account_cart(db, email)
+        cart = services.account_cart(db, email)
         if not code.strip():
             cart.promo_code = None
             db.commit()
@@ -692,7 +677,7 @@ def place_order(
     to reuse the customer's last order details."""
     email = _account_email(ctx)
     with _session() as db:
-        cart = _account_cart(db, email, create=False)
+        cart = services.account_cart(db, email, create=False)
         if not cart or not cart.items:
             raise ToolError("The cart is empty. Add products with add_to_cart first.")
 

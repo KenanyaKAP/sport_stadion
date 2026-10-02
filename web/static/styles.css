@@ -46,6 +46,14 @@ h1, h2, h3 { font-family: var(--display); font-weight: 700; letter-spacing: .01e
 .cart-link { position: relative; display: flex; align-items: center; gap: 6px; }
 .cart-badge { min-width: 20px; height: 20px; border-radius: 10px; background: var(--brand-2); color: var(--ink); font-size: 12px; font-weight: 700; display: inline-grid; place-items: center; padding: 0 6px; }
 .cart-badge:empty { display: none; }
+.account-btn { display: inline-flex; align-items: center; gap: 8px; height: 36px; padding: 0 12px; border-radius: 999px; border: 1px solid #3a4147; background: none; color: #fff; cursor: pointer; font-weight: 600; max-width: 240px; }
+.account-btn:hover { background: #2a3035; }
+.account-btn span:last-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.avatar { width: 24px; height: 24px; flex: none; border-radius: 50%; background: var(--brand-2); color: var(--ink); display: inline-grid; place-items: center; font-size: 13px; font-weight: 800; }
+.account-dialog { border: 0; border-radius: var(--radius); padding: 24px; width: min(400px, calc(100% - 32px)); box-shadow: 0 20px 60px rgba(0,0,0,.3); position: relative; }
+.account-dialog::backdrop { background: rgba(21,25,28,.55); }
+.account-dialog h3 { font-size: 28px; }
+.dialog-close { position: absolute; top: 12px; right: 12px; width: 32px; height: 32px; border: 0; border-radius: 50%; background: var(--bg); cursor: pointer; font-size: 20px; line-height: 1; }
 
 /* ---------- Buttons & form ---------- */
 .btn { display: inline-flex; align-items: center; justify-content: center; gap: 8px; height: 44px; padding: 0 20px; border-radius: 999px; border: 1px solid transparent; font-weight: 600; cursor: pointer; transition: transform .05s, background .15s, opacity .15s; }

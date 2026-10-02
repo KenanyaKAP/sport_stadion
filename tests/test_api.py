@@ -138,3 +138,28 @@ def test_info_handshake(client):
 def test_storefront_pages_served(client):
     for path in ["/", "/product/velocita-aero-glide-3", "/cart", "/checkout", "/order/SS-1", "/orders", "/static/app.js"]:
         assert client.get(path).status_code == 200, path
+
+
+def test_web_sign_in_uses_the_chat_account_cart(client):
+    email = "web-and-chat@example.com"
+    headers = {"Accept": "application/json, text/event-stream", "X-Customer-Email": email}
+    # A Conversify chat puts a cap in the account cart over MCP...
+    client.post("/mcp", headers=headers, json={"jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": {
+        "name": "add_to_cart", "arguments": {"product": "kinetik-run-cap", "color": "Hitam", "size": "One Size"}}})
+
+    # ...while the browser has an anonymous cart with a T-shirt.
+    tee = first_in_stock(client, "kinetik-drycore-tee")
+    anon = client.post("/api/carts").json()
+    client.post(f"/api/carts/{anon['id']}/items", json={"variant_id": tee["id"], "quantity": 1})
+
+    # Signing in (email is case-insensitive) returns the account cart with both items merged.
+    cart = client.post("/api/carts/account", json={"email": "Web-And-Chat@example.com", "merge_cart_id": anon["id"]}).json()
+    assert {i["product_slug"] for i in cart["items"]} == {"kinetik-run-cap", "kinetik-drycore-tee"}
+    assert client.get(f"/api/carts/{anon['id']}").status_code == 404
+
+    # The chat sees the merged cart too, and signing in again returns the same cart.
+    view = client.post("/mcp", headers=headers, json={"jsonrpc": "2.0", "id": 2, "method": "tools/call",
+                                                      "params": {"name": "view_cart", "arguments": {}}}).json()
+    assert "Kinetik DryCore Tee" in view["result"]["content"][0]["text"]
+    assert client.post("/api/carts/account", json={"email": email}).json()["id"] == cart["id"]
+    assert client.post("/api/carts/account", json={"email": "not-an-email"}).status_code == 422

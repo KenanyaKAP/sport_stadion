@@ -97,6 +97,7 @@ Semua harga dalam Rupiah (integer).
 | GET | `/api/products/{slug}` | Detail lengkap + semua varian & stok |
 | GET | `/api/variants/{sku}` | Cek satu SKU (harga, stok) |
 | POST | `/api/carts` | Buat keranjang baru |
+| POST | `/api/carts/account` | Masuk dengan email: keranjang akun (sama dengan yang dipakai chat Conversify); `merge_cart_id` menggabungkan keranjang anonim |
 | GET | `/api/carts/{id}?shipping_method=` | Lihat keranjang + total (opsional termasuk ongkir) |
 | POST | `/api/carts/{id}/items` | Tambah item (`variant_id` atau `sku`, `quantity`) |
 | PATCH | `/api/carts/{id}/items/{item_id}` | Ubah jumlah (0 = hapus) |
@@ -125,6 +126,10 @@ curl -s -X POST $B/checkout -H 'content-type: application/json' -d "{
   \"shipping_address\": {\"street\": \"Jl. Sudirman 1\", \"city\": \"Jakarta\", \"province\": \"DKI Jakarta\", \"postal_code\": \"12190\"},
   \"shipping_method\": \"regular\", \"payment_method\": \"bank_transfer\"}"
 ```
+
+### Akun di website
+
+Tombol **Masuk** di header: masuk hanya dengan email (tanpa password, toko simulasi). Setelah masuk, website memakai keranjang akun yang sama dengan chat Conversify (isi keranjang anonim ikut digabung), *Pesanan Saya* langsung menampilkan pesanan akun, dan email checkout terisi otomatis. Pembayaran disimulasikan dari halaman pesanan.
 
 ### Deep link ke website
 

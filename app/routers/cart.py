@@ -29,6 +29,17 @@ def create_cart(db: Session = Depends(get_db)):
     return services.cart_out(db, cart)
 
 
+@router.post("/account", response_model=schemas.CartOut, summary="Sign in: get (or create) an account's cart")
+def account_cart(body: schemas.AccountCartIn, db: Session = Depends(get_db)):
+    """The same cart Conversify chats use for this email. An anonymous cart can be merged in."""
+    cart = services.account_cart(db, str(body.email))
+    if body.merge_cart_id and body.merge_cart_id != cart.id:
+        source = db.get(models.Cart, body.merge_cart_id)
+        if source and source.customer_email is None:
+            services.merge_cart(db, source, cart)
+    return services.cart_out(db, cart)
+
+
 @router.get("/{cart_id}", response_model=schemas.CartOut)
 def get_cart(
     cart_id: str,

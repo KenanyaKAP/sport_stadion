@@ -39,6 +39,8 @@ function render() {
     return;
   }
   const prof = loadProfile();
+  const accountEmail = Account.email();
+  if (accountEmail) prof.email = accountEmail;
   root.innerHTML = `<form class="two-col" id="form" novalidate>
     <div>
       <div class="panel">
@@ -47,7 +49,7 @@ function render() {
           ${FIELDS.map(([k, label, type, , cls]) => `
             <div class="field ${cls}">
               <label for="f-${k}">${label}</label>
-              <input class="input" id="f-${k}" name="${k}" type="${type}" value="${esc(prof[k] ?? "")}" required>
+              <input class="input" id="f-${k}" name="${k}" type="${type}" value="${esc(prof[k] ?? "")}" required ${k === "email" && accountEmail ? "readonly" : ""}>
               <div class="error" data-err="${k}"></div>
             </div>`).join("")}
           <div class="field full">

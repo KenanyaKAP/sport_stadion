@@ -6,6 +6,7 @@ HTTP error response and the MCP layer into a tool error the model can act on.
 
 import random
 import string
+import uuid
 from datetime import datetime, timezone
 
 from sqlalchemy import and_, func
@@ -380,6 +381,39 @@ def cart_out(db: Session, cart: models.Cart, shipping_method: str | None = None)
             total=subtotal - discount + (fee or 0),
         ),
     )
+
+
+def account_cart(db: Session, email: str, create: bool = True) -> models.Cart | None:
+    """The active cart of an account (identified by email): shared by the web shop when signed in
+    and by every Conversify chat that sends the same email."""
+    email = email.strip().lower()
+    cart = (
+        db.query(models.Cart)
+        .filter(models.Cart.customer_email == email)
+        .order_by(models.Cart.created_at.desc())
+        .first()
+    )
+    if cart is None and create:
+        cart = models.Cart(id=str(uuid.uuid4()), customer_email=email)
+        db.add(cart)
+        db.commit()
+    return cart
+
+
+def merge_cart(db: Session, source: models.Cart, target: models.Cart) -> None:
+    """Moves an anonymous cart's items (and promo) into an account cart, capped by stock, then
+    deletes the anonymous cart."""
+    for item in list(source.items):
+        existing = next((i for i in target.items if i.variant_id == item.variant_id), None)
+        quantity = min(item.quantity + (existing.quantity if existing else 0), item.variant.stock, 20)
+        if existing:
+            existing.quantity = max(existing.quantity, quantity)
+        elif quantity > 0:
+            target.items.append(models.CartItem(variant=item.variant, quantity=quantity))
+    if source.promo_code and not target.promo_code:
+        target.promo_code = source.promo_code
+    db.delete(source)
+    db.commit()
 
 
 def add_to_cart(db: Session, cart: models.Cart, variant: models.ProductVariant, quantity: int) -> None:

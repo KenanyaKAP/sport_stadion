@@ -109,6 +109,11 @@ class CartItemUpdate(BaseModel):
     quantity: int = Field(..., ge=0, le=20, description="0 removes the item.")
 
 
+class AccountCartIn(BaseModel):
+    email: EmailStr
+    merge_cart_id: str | None = Field(None, description="Anonymous cart to move into the account cart")
+
+
 class PromoIn(BaseModel):
     code: str
 
